@@ -445,6 +445,51 @@ html, body, #root {
 .jira-new { background: rgba(108, 182, 255, 0.12); color: var(--accent); }
 .jira-indeterminate { background: rgba(251, 191, 36, 0.12); color: var(--orange); }
 .jira-done { background: rgba(74, 222, 128, 0.12); color: var(--green); }
+
+/* ---- Jira kanban board ---- */
+.board-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.board-head h2 { margin: 0; font-size: 15px; }
+.jselect {
+    background: rgba(0, 0, 0, 0.25); border: 1px solid var(--stroke);
+    border-radius: 8px; color: var(--text); padding: 6px 10px; outline: none;
+    font-size: 12px; cursor: pointer;
+}
+.jselect:focus { border-color: var(--accent); }
+.jselect option { background: #161b22; }
+
+.board { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; flex: 1; min-height: 0; }
+.col {
+    min-width: 250px; width: 250px; flex-shrink: 0;
+    background: var(--glass);
+    backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
+    border: 1px solid var(--stroke); border-radius: 14px;
+    display: flex; flex-direction: column;
+    max-height: 100%;
+    box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.col-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px; border-bottom: 1px solid var(--stroke);
+}
+.col-cards { padding: 8px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 60px; }
+
+.jcard {
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--stroke); border-radius: 10px;
+    padding: 9px 11px; cursor: grab;
+    transition: border-color 0.15s, transform 0.15s, opacity 0.2s;
+}
+.jcard:hover { border-color: var(--stroke-strong); transform: translateY(-1px); }
+.jcard:active { cursor: grabbing; }
+.jcard-moving { opacity: 0.35; pointer-events: none; }
+.jcard-top { display: flex; justify-content: space-between; align-items: center; }
+.jcard-summary { font-size: 12px; margin: 5px 0; line-height: 1.35; word-break: break-all; }
+.jcard-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 10.5px; }
+
+.jprio { font-size: 9.5px; border-radius: 4px; padding: 1px 5px; border: 1px solid var(--stroke); color: var(--muted); }
+.jprio-highest, .jprio-high { color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
+.jprio-low, .jprio-lowest { color: var(--accent); }
 .toast { color: var(--green); font-size: 11px; margin-left: 10px; font-weight: 400; }
 .idle-list { max-height: 320px; overflow-y: auto; }
 

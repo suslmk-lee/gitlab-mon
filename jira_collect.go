@@ -85,6 +85,52 @@ func (a *App) collectJira(client *jira.Client, since time.Time) error {
 	return nil
 }
 
+// JiraMove transitions an issue to the workflow state whose status name is
+// targetStatus (드래그&드롭 칸반 이동). Returns "" on success or an error message.
+// 성공 시 해당 이슈만 재조회해 캐시·스냅샷을 즉시 갱신한다 (전체 재동기화 없음).
+func (a *App) JiraMove(key, targetStatus string) string {
+	a.mu.Lock()
+	jc := a.jiraClient
+	a.mu.Unlock()
+	if jc == nil {
+		return "Jira가 설정되지 않았습니다"
+	}
+
+	trs, err := jc.GetTransitions(key)
+	if err != nil {
+		return err.Error()
+	}
+	id := ""
+	for _, t := range trs {
+		if t.ToStatus == targetStatus {
+			id = t.ID
+			break
+		}
+	}
+	if id == "" {
+		return key + ": '" + targetStatus + "' 상태로의 전환이 워크플로우에 없습니다"
+	}
+	if err := jc.Transition(key, id); err != nil {
+		return err.Error()
+	}
+
+	// 변경된 이슈만 재조회해 즉시 반영
+	if is, err := jc.GetIssue(key); err == nil {
+		a.mu.Lock()
+		a.jiraCache[key] = &is
+		for i := range a.snap.JiraIssues {
+			if a.snap.JiraIssues[i].Key == key {
+				a.snap.JiraIssues[i] = is
+			}
+		}
+		snap := a.snap
+		a.mu.Unlock()
+		a.publish(snap)
+		a.saveJiraCache()
+	}
+	return ""
+}
+
 // aggregateJira flattens the issue cache, newest-updated first.
 func (a *App) aggregateJira() []jira.Issue {
 	a.mu.Lock()

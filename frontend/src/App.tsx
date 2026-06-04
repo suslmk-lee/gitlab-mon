@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -208,8 +208,96 @@ function SetupView({onSaved}: { onSaved: () => void }) {
     );
 }
 
+// ---- Jira kanban board ----
+const CAT_ORDER: Record<string, number> = {new: 0, indeterminate: 1, done: 2};
+
+function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectKey: string; onBack: () => void }) {
+    const [moving, setMoving] = useState<string | null>(null);
+    const [err, setErr] = useState('');
+    const projIssues = useMemo(() => issues.filter(i => i.project_key === projectKey), [issues, projectKey]);
+    const projectName = projIssues[0]?.project_name || projectKey;
+
+    // 컬럼 = 이 프로젝트 이슈들이 가진 상태 (카테고리 순 정렬)
+    const columns = useMemo(() => {
+        const seen = new Map<string, string>(); // status → category
+        for (const i of projIssues) seen.set(i.status, i.status_category);
+        return [...seen.entries()].sort((a, b) =>
+            (CAT_ORDER[a[1]] ?? 9) - (CAT_ORDER[b[1]] ?? 9) || a[0].localeCompare(b[0]));
+    }, [projIssues]);
+
+    const drop = async (e: React.DragEvent, status: string) => {
+        e.preventDefault();
+        const key = e.dataTransfer.getData('text/plain');
+        if (!key) return;
+        const issue = projIssues.find(i => i.key === key);
+        if (!issue || issue.status === status) return;
+        setMoving(key);
+        setErr('');
+        const res = await JiraMove(key, status);
+        setMoving(null);
+        if (res) {
+            setErr(res);
+            setTimeout(() => setErr(''), 6000);
+        }
+    };
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <button className="btn btn-sm" onClick={onBack}>← 전체 현황</button>
+                <h2>{projectKey} <span className="hint">{projectName} · 카드를 드래그하면 상태가 변경됩니다</span></h2>
+            </div>
+            {err && <div className="error-banner">⚠ {err}</div>}
+            <div className="board">
+                {columns.map(([status, cat]) => {
+                    const cards = projIssues.filter(i => i.status === status)
+                        .sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);
+                    const shown = cat === 'done' ? cards.slice(0, 15) : cards;
+                    return (
+                        <div key={status} className={`col col-${cat}`}
+                             onDragOver={e => e.preventDefault()}
+                             onDrop={e => drop(e, status)}>
+                            <div className="col-head">
+                                <span className={`jira-status jira-${cat}`}>{status}</span>
+                                <span className="count">{cards.length}</span>
+                            </div>
+                            <div className="col-cards">
+                                {shown.map(i => {
+                                    const today = new Date().toISOString().slice(0, 10);
+                                    const late = i.status_category !== 'done' && i.due_date && i.due_date < today;
+                                    return (
+                                        <div key={i.key}
+                                             className={`jcard ${moving === i.key ? 'jcard-moving' : ''}`}
+                                             draggable
+                                             onDragStart={e => e.dataTransfer.setData('text/plain', i.key)}
+                                             onDoubleClick={() => OpenURL(i.url)}
+                                             title="더블클릭: Jira에서 열기 / 드래그: 상태 변경">
+                                            <div className="jcard-top">
+                                                <span className="jira-key">{i.key}</span>
+                                                {i.priority && <span className={`jprio jprio-${i.priority.toLowerCase()}`}>{i.priority}</span>}
+                                            </div>
+                                            <div className="jcard-summary">{i.summary}</div>
+                                            <div className="jcard-meta">
+                                                <span>{i.assignee || '미지정'}</span>
+                                                {i.due_date && <span className={late ? 'jira-due' : ''}>~{i.due_date}</span>}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {cat === 'done' && cards.length > 15 &&
+                                    <div className="empty" style={{padding: '8px'}}>+{cards.length - 15}건 더 (최근 15건만 표시)</div>}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 // ---- Jira view ----
 function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
+    const [board, setBoard] = useState<string | null>(null);
     const issues = snap.jira_issues;
     const today = new Date().toISOString().slice(0, 10);
     const cut = periodCutoff(period);
@@ -257,8 +345,20 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
         );
     }
 
+    if (board) return <JiraBoard issues={issues} projectKey={board} onBack={() => setBoard(null)}/>;
+
+    const allProjects = [...new Map(issues.map(i => [i.project_key, i.project_name])).entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]));
+
     return (
         <div className="stats scroll">
+            <div className="board-head">
+                <h2>Jira 현황</h2>
+                <select className="jselect" value="" onChange={e => e.target.value && setBoard(e.target.value)}>
+                    <option value="">칸반보드 열기…</option>
+                    {allProjects.map(([k, n]) => <option key={k} value={k}>{k} — {n}</option>)}
+                </select>
+            </div>
             <div className="cards">
                 <div className="card"><div className="card-v">{open.length}</div><div className="card-l">열린 이슈</div></div>
                 <div className="card"><div className="card-v">{inProgress.length}</div><div className="card-l">진행 중</div></div>
@@ -301,7 +401,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                     <h3>프로젝트별 열린 이슈</h3>
                     {byProject.map(([key, r]) => (
                         <div key={key} className="lb-row">
-                            <span className="lb-name" title={r.name}>{key}</span>
+                            <span className="lb-name drill" title={`${r.name} — 클릭하면 칸반보드`} onClick={() => setBoard(key)}>{key}</span>
                             <div className="lb-bar-wrap">
                                 <div className="lb-bar lb-bar-repo" style={{width: `${(r.n / projectMax) * 100}%`}}/>
                             </div>

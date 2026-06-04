@@ -52,6 +52,29 @@ func (c *Client) get(path string, query url.Values, out any) error {
 	return json.Unmarshal(body, out)
 }
 
+func (c *Client) post(path string, body any) error {
+	b, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+path, strings.NewReader(string(b)))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.Email, c.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return fmt.Errorf("Jira POST %s: %s %s", path, resp.Status, string(msg))
+	}
+	return nil
+}
+
 // jiraTime parses Jira Cloud timestamps like "2026-05-18T11:43:19.089+0900".
 type jiraTime struct{ time.Time }
 
@@ -144,6 +167,55 @@ func (c *Client) normalize(r rawIssue) Issue {
 }
 
 const issueFields = "summary,status,assignee,priority,issuetype,project,created,updated,duedate,resolutiondate"
+
+// Transition is one allowed workflow move for an issue.
+type Transition struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	ToStatus   string `json:"to_status"`
+	ToCategory string `json:"to_category"`
+}
+
+// GetTransitions returns the workflow transitions currently allowed.
+func (c *Client) GetTransitions(key string) ([]Transition, error) {
+	var resp struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			To   struct {
+				Name           string `json:"name"`
+				StatusCategory struct {
+					Key string `json:"key"`
+				} `json:"statusCategory"`
+			} `json:"to"`
+		} `json:"transitions"`
+	}
+	if err := c.get("/rest/api/3/issue/"+key+"/transitions", nil, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]Transition, 0, len(resp.Transitions))
+	for _, t := range resp.Transitions {
+		out = append(out, Transition{ID: t.ID, Name: t.Name, ToStatus: t.To.Name, ToCategory: t.To.StatusCategory.Key})
+	}
+	return out, nil
+}
+
+// Transition executes a workflow transition on an issue.
+func (c *Client) Transition(key, transitionID string) error {
+	return c.post("/rest/api/3/issue/"+key+"/transitions",
+		map[string]any{"transition": map[string]string{"id": transitionID}})
+}
+
+// GetIssue fetches a single issue in normalized form.
+func (c *Client) GetIssue(key string) (Issue, error) {
+	q := url.Values{}
+	q.Set("fields", issueFields)
+	var r rawIssue
+	if err := c.get("/rest/api/3/issue/"+key, q, &r); err != nil {
+		return Issue{}, err
+	}
+	return c.normalize(r), nil
+}
 
 // SearchIssues runs a JQL query, following nextPageToken pagination,
 // up to maxPages*100 issues.
