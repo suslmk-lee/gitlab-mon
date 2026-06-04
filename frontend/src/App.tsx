@@ -97,14 +97,34 @@ function describeEvent(e: GLEvent): string {
     return `${e.action_name} ${e.target_type || ''} ${e.target_title || ''}`.trim();
 }
 
-// 활동 지수 가중치: 커밋 1, MR 생성 4, 머지 6, 댓글 1, 기타 0.5
-function eventScore(e: GLEvent): number {
+// ---- 활동 지수 가중치 (통계 탭 ⚙에서 조정, localStorage에 저장) ----
+interface Weights {
+    commit: number;    // 커밋 1개당
+    commitCap: number; // push 1건당 커밋 인정 상한
+    mrOpen: number;    // MR 생성
+    mrOther: number;   // MR 기타 액션 (업데이트/클로즈 등)
+    merge: number;     // 머지
+    comment: number;   // 댓글
+    other: number;     // 기타 이벤트
+}
+const DEFAULT_WEIGHTS: Weights = {commit: 1, commitCap: 20, mrOpen: 4, mrOther: 2, merge: 6, comment: 1, other: 0.5};
+const WEIGHTS_KEY = 'activity-weights';
+
+function loadWeights(): Weights {
+    try {
+        return {...DEFAULT_WEIGHTS, ...JSON.parse(localStorage.getItem(WEIGHTS_KEY) || '{}')};
+    } catch {
+        return {...DEFAULT_WEIGHTS};
+    }
+}
+
+function eventScore(e: GLEvent, w: Weights): number {
     const k = eventKind(e);
-    if (k === 'push') return Math.max(1, Math.min(e.push_data?.commit_count ?? 1, 20));
-    if (k === 'mr') return e.action_name === 'opened' ? 4 : 2;
-    if (k === 'merge') return 6;
-    if (k === 'comment') return 1;
-    return 0.5;
+    if (k === 'push') return Math.max(1, Math.min(e.push_data?.commit_count ?? 1, w.commitCap)) * w.commit;
+    if (k === 'mr') return e.action_name === 'opened' ? w.mrOpen : w.mrOther;
+    if (k === 'merge') return w.merge;
+    if (k === 'comment') return w.comment;
+    return w.other;
 }
 
 function authorLabel(a: Author | undefined): string {
@@ -119,7 +139,7 @@ interface UserStat {
     byDay: Map<string, number>; // day → score
 }
 
-function aggregateUsers(events: GLEvent[]): UserStat[] {
+function aggregateUsers(events: GLEvent[], w: Weights): UserStat[] {
     const map = new Map<string, UserStat>();
     for (const e of events) {
         const u = e.author?.username || '?';
@@ -129,7 +149,7 @@ function aggregateUsers(events: GLEvent[]): UserStat[] {
             map.set(u, s);
         }
         const k = eventKind(e);
-        const sc = eventScore(e);
+        const sc = eventScore(e, w);
         s.score += sc;
         s.byDay.set(dayKey(e.created_at), (s.byDay.get(dayKey(e.created_at)) ?? 0) + sc);
         if (k === 'push') { s.pushes++; s.commits += e.push_data?.commit_count ?? 0; }
@@ -347,6 +367,19 @@ function PipeRow({p}: { p: Pipeline }) {
 // ---- Stats view ----
 function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; onDrill: (q: string) => void }) {
     const [includeBots, setIncludeBots] = useState(false);
+    const [weights, setWeights] = useState<Weights>(loadWeights);
+    const [showCfg, setShowCfg] = useState(false);
+    const updateWeight = (k: keyof Weights, v: number) => {
+        setWeights(prev => {
+            const next = {...prev, [k]: isNaN(v) ? 0 : v};
+            localStorage.setItem(WEIGHTS_KEY, JSON.stringify(next));
+            return next;
+        });
+    };
+    const resetWeights = () => {
+        localStorage.removeItem(WEIGHTS_KEY);
+        setWeights({...DEFAULT_WEIGHTS});
+    };
     const days = useMemo(() => lastNDays(period), [snap.fetched_at, period]);
     const xEvery = period === 90 ? 10 : 5;
     const events = useMemo(() => {
@@ -358,9 +391,9 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
         return snap.merged_mrs.filter(m => m.merged_at && new Date(m.merged_at).getTime() >= cut);
     }, [snap.merged_mrs, period]);
     const users = useMemo(() => {
-        const all = aggregateUsers(events);
+        const all = aggregateUsers(events, weights);
         return includeBots ? all : all.filter(u => !u.isBot);
-    }, [events, includeBots]);
+    }, [events, includeBots, weights]);
 
     // 날짜별 kind 스택
     const daily = useMemo(() => {
@@ -422,12 +455,35 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
             {/* 사용자 리더보드 */}
             <section className="stat-block">
                 <h3>
-                    사용자별 활동 지수 <span className="hint">커밋 1 · MR 4 · 머지 6 · 댓글 1</span>
+                    사용자별 활동 지수
+                    <span className="hint">커밋 {weights.commit} · MR {weights.mrOpen} · 머지 {weights.merge} · 댓글 {weights.comment}</span>
+                    <button className="gear" title="가중치 설정" onClick={() => setShowCfg(v => !v)}>⚙</button>
                     <label className="toggle">
                         <input type="checkbox" checked={includeBots} onChange={e => setIncludeBots(e.target.checked)}/>
                         토큰봇 포함
                     </label>
                 </h3>
+                {showCfg && (
+                    <div className="wcfg">
+                        {([
+                            ['commit', '커밋 1개당'],
+                            ['commitCap', 'push당 커밋 상한'],
+                            ['mrOpen', 'MR 생성'],
+                            ['mrOther', 'MR 기타'],
+                            ['merge', '머지'],
+                            ['comment', '댓글'],
+                            ['other', '기타 이벤트'],
+                        ] as [keyof Weights, string][]).map(([k, label]) => (
+                            <label key={k} className="wcfg-item">
+                                <span>{label}</span>
+                                <input type="number" step={k === 'commitCap' ? 1 : 0.5} min={0}
+                                       value={weights[k]}
+                                       onChange={e => updateWeight(k, parseFloat(e.target.value))}/>
+                            </label>
+                        ))}
+                        <button className="btn btn-sm" onClick={resetWeights}>기본값 복원</button>
+                    </div>
+                )}
                 {top.map((u, i) => (
                     <div key={u.username} className="lb-row">
                         <span className="lb-rank">{i + 1}</span>
