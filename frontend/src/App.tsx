@@ -227,11 +227,20 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
             (CAT_ORDER[a[1]] ?? 9) - (CAT_ORDER[b[1]] ?? 9) || a[0].localeCompare(b[0]));
     }, [projIssues]);
 
-    // 하위 이슈를 가진 모든 부모 키 (전체 접기/펼치기용)
-    const parentKeys = useMemo(() => {
-        const withKids = new Set(projIssues.map(i => i.parent_key).filter(Boolean));
-        return [...withKids];
+    // 부모 키 → 자식 이슈 목록 (컬럼 무관, 전체)
+    const childrenByParent = useMemo(() => {
+        const m = new Map<string, JiraIssue[]>();
+        for (const i of projIssues) {
+            if (!i.parent_key) continue;
+            const arr = m.get(i.parent_key) ?? [];
+            arr.push(i);
+            m.set(i.parent_key, arr);
+        }
+        return m;
     }, [projIssues]);
+
+    // 하위 이슈를 가진 모든 부모 키 (전체 접기/펼치기용)
+    const parentKeys = useMemo(() => [...childrenByParent.keys()], [childrenByParent]);
     const allCollapsed = parentKeys.length > 0 && parentKeys.every(k => collapsed.has(k));
 
     const toggle = (key: string) => setCollapsed(prev => {
@@ -305,9 +314,13 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                 <span className="count">{total}</span>
                             </div>
                             <div className="col-cards">
-                                {shown.map(({i, kids, hidden}) => {
+                                {shown.map(({i, kids}) => {
                                     const late = i.status_category !== 'done' && i.due_date && i.due_date < today;
                                     const parentVisible = i.parent_key && topKeys.has(i.parent_key);
+                                    const kidsAll = !i.parent_key ? (childrenByParent.get(i.key) ?? []) : [];
+                                    const kidsDone = kidsAll.filter(k => k.status_category === 'done').length;
+                                    const kidsElsewhere = kidsAll.filter(k => k.status !== status);
+                                    const isCollapsed = collapsed.has(i.key);
                                     return (
                                         <div key={i.key}
                                              className={`jcard ${i.parent_key ? 'jcard-sub' : ''} ${moving === i.key ? 'jcard-moving' : ''}`}
@@ -316,15 +329,16 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                              onDoubleClick={() => OpenURL(i.url)}
                                              title={`${i.parent_key ? `상위: ${i.parent_key} ${i.parent_summary}\n` : ''}더블클릭: Jira에서 열기 / 드래그: 상태 변경`}>
                                             <div className="jcard-top">
-                                                {kids > 0 && (
+                                                {kidsAll.length > 0 && (
                                                     <button className="jfold"
                                                             onClick={e => { e.stopPropagation(); toggle(i.key); }}
-                                                            title={collapsed.has(i.key) ? '하위 이슈 펼치기' : '하위 이슈 접기'}>
-                                                        {collapsed.has(i.key) ? '▸' : '▾'}
+                                                            title={isCollapsed ? '하위 이슈 펼치기' : '하위 이슈 접기'}>
+                                                        {isCollapsed ? '▸' : '▾'}
                                                     </button>
                                                 )}
                                                 <span className="jira-key">{i.key}</span>
-                                                {hidden > 0 && <span className="jkids">하위 {hidden}</span>}
+                                                {kidsAll.length > 0 &&
+                                                    <span className="jkids" title={`하위 이슈 ${kidsAll.length}개 중 ${kidsDone}개 완료`}>하위 {kidsDone}/{kidsAll.length}</span>}
                                                 {i.parent_key && !parentVisible &&
                                                     <span className="jparent" title={i.parent_summary}>↳ {i.parent_key}</span>}
                                                 {i.priority && <span className={`jprio jprio-${i.priority.toLowerCase()}`}>{i.priority}</span>}
@@ -334,6 +348,19 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                                 <span>{i.assignee || '미지정'}</span>
                                                 {i.due_date && <span className={late ? 'jira-due' : ''}>~{i.due_date}</span>}
                                             </div>
+                                            {!isCollapsed && kidsElsewhere.length > 0 && (
+                                                <div className="jghosts">
+                                                    {kidsElsewhere.map(k => (
+                                                        <div key={k.key} className="jghost"
+                                                             onDoubleClick={e => { e.stopPropagation(); OpenURL(k.url); }}
+                                                             title={`${k.summary} — 현재 '${k.status}' 컬럼에 있음 / 더블클릭: Jira에서 열기`}>
+                                                            <span className={`jira-status jira-${k.status_category}`}>{k.status}</span>
+                                                            <span className="jghost-key">{k.key}</span>
+                                                            <span className="jghost-sum">{k.summary}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}

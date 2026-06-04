@@ -512,6 +512,22 @@ html, body, #root {
     border-radius: 8px; padding: 1px 7px;
 }
 
+/* 다른 컬럼에 있는 자식 이슈 미니 행 */
+.jghosts {
+    margin-top: 7px; padding-top: 6px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.12);
+    display: flex; flex-direction: column; gap: 4px;
+}
+.jghost {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10.5px; color: var(--muted);
+    padding: 2px 2px; border-radius: 5px; cursor: default;
+}
+.jghost:hover { background: rgba(255, 255, 255, 0.05); }
+.jghost .jira-status { font-size: 9px; min-width: 40px; padding: 0 5px; }
+.jghost-key { color: var(--accent); font-family: ui-monospace, SFMono-Regular, monospace; flex-shrink: 0; }
+.jghost-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .jprio { font-size: 9.5px; border-radius: 4px; padding: 1px 5px; border: 1px solid var(--stroke); color: var(--muted); }
 .jprio-highest, .jprio-high { color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
 .jprio-low, .jprio-lowest { color: var(--accent); }
