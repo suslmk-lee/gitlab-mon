@@ -293,6 +293,9 @@ export namespace jira {
 	export class Issue {
 	    key: string;
 	    summary: string;
+	    parent_key: string;
+	    parent_summary: string;
+	    is_subtask: boolean;
 	    project_key: string;
 	    project_name: string;
 	    status: string;
@@ -316,6 +319,9 @@ export namespace jira {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.key = source["key"];
 	        this.summary = source["summary"];
+	        this.parent_key = source["parent_key"];
+	        this.parent_summary = source["parent_summary"];
+	        this.is_subtask = source["is_subtask"];
 	        this.project_key = source["project_key"];
 	        this.project_name = source["project_name"];
 	        this.status = source["status"];

@@ -28,7 +28,8 @@ interface Pipeline {
 }
 interface CodeDay { user: string; day: string; add: number; del: number; commits: number }
 interface JiraIssue {
-    key: string; summary: string; project_key: string; project_name: string;
+    key: string; summary: string; parent_key: string; parent_summary: string;
+    is_subtask: boolean; project_key: string; project_name: string;
     status: string; status_category: string; assignee: string; priority: string;
     type: string; created: string; updated: string; due_date: string;
     resolved: boolean; url: string;
@@ -250,8 +251,22 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
             {err && <div className="error-banner">⚠ {err}</div>}
             <div className="board">
                 {columns.map(([status, cat]) => {
-                    const cards = projIssues.filter(i => i.status === status)
+                    const inCol = projIssues.filter(i => i.status === status)
                         .sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);
+                    // 부모/단독 이슈 먼저, 하위 이슈는 같은 컬럼의 부모 바로 아래에
+                    const tops = inCol.filter(i => !i.parent_key);
+                    const subs = inCol.filter(i => i.parent_key);
+                    const cards: JiraIssue[] = [];
+                    const placed = new Set<string>();
+                    for (const t of tops) {
+                        cards.push(t);
+                        for (const sb of subs) {
+                            if (sb.parent_key === t.key) { cards.push(sb); placed.add(sb.key); }
+                        }
+                    }
+                    // 부모가 다른 컬럼에 있는 하위 이슈: 부모키 순으로 묶어 뒤에
+                    cards.push(...subs.filter(sb => !placed.has(sb.key))
+                        .sort((a, b) => a.parent_key.localeCompare(b.parent_key)));
                     const shown = cat === 'done' ? cards.slice(0, 15) : cards;
                     return (
                         <div key={status} className={`col col-${cat}`}
@@ -265,15 +280,18 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                 {shown.map(i => {
                                     const today = new Date().toISOString().slice(0, 10);
                                     const late = i.status_category !== 'done' && i.due_date && i.due_date < today;
+                                    const parentInCol = i.parent_key && shown.some(c => c.key === i.parent_key);
                                     return (
                                         <div key={i.key}
-                                             className={`jcard ${moving === i.key ? 'jcard-moving' : ''}`}
+                                             className={`jcard ${i.parent_key ? 'jcard-sub' : ''} ${moving === i.key ? 'jcard-moving' : ''}`}
                                              draggable
                                              onDragStart={e => e.dataTransfer.setData('text/plain', i.key)}
                                              onDoubleClick={() => OpenURL(i.url)}
-                                             title="더블클릭: Jira에서 열기 / 드래그: 상태 변경">
+                                             title={`${i.parent_key ? `상위: ${i.parent_key} ${i.parent_summary}\n` : ''}더블클릭: Jira에서 열기 / 드래그: 상태 변경`}>
                                             <div className="jcard-top">
                                                 <span className="jira-key">{i.key}</span>
+                                                {i.parent_key && !parentInCol &&
+                                                    <span className="jparent" title={i.parent_summary}>↳ {i.parent_key}</span>}
                                                 {i.priority && <span className={`jprio jprio-${i.priority.toLowerCase()}`}>{i.priority}</span>}
                                             </div>
                                             <div className="jcard-summary">{i.summary}</div>

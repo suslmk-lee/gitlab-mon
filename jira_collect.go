@@ -10,7 +10,10 @@ import (
 	"gitlab-mon/internal/jira"
 )
 
+const jiraCacheVersion = 2 // 2: parent 필드 추가
+
 type jiraCacheFile struct {
+	Version    int                    `json:"version"`
 	WindowDays int                    `json:"window_days"`
 	FetchedAt  time.Time              `json:"fetched_at"`
 	Issues     map[string]*jira.Issue `json:"issues"` // key → issue
@@ -27,7 +30,7 @@ func jiraCachePath() (string, error) {
 func (a *App) loadJiraCache() {
 	if p, err := jiraCachePath(); err == nil {
 		var f jiraCacheFile
-		if loadJSONFile(p, &f) && f.WindowDays == statsWindowDay && f.Issues != nil {
+		if loadJSONFile(p, &f) && f.Version == jiraCacheVersion && f.WindowDays == statsWindowDay && f.Issues != nil {
 			a.mu.Lock()
 			a.jiraCache = f.Issues
 			a.jiraFetchedAt = f.FetchedAt
@@ -40,7 +43,7 @@ func (a *App) saveJiraCache() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if p, err := jiraCachePath(); err == nil {
-		saveJSONFile(p, jiraCacheFile{WindowDays: statsWindowDay, FetchedAt: a.jiraFetchedAt, Issues: a.jiraCache})
+		saveJSONFile(p, jiraCacheFile{Version: jiraCacheVersion, WindowDays: statsWindowDay, FetchedAt: a.jiraFetchedAt, Issues: a.jiraCache})
 	}
 }
 

@@ -487,6 +487,19 @@ html, body, #root {
 .jcard-summary { font-size: 12px; margin: 5px 0; line-height: 1.35; word-break: break-all; }
 .jcard-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 10.5px; }
 
+/* 하위 이슈: 들여쓰기 + 왼쪽 연결선 */
+.jcard-sub {
+    margin-left: 16px;
+    border-left: 2px solid rgba(108, 182, 255, 0.45);
+    background: rgba(0, 0, 0, 0.18);
+}
+.jparent {
+    font-size: 9.5px; color: var(--muted);
+    border: 1px solid var(--stroke); border-radius: 4px; padding: 1px 5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
 .jprio { font-size: 9.5px; border-radius: 4px; padding: 1px 5px; border: 1px solid var(--stroke); color: var(--muted); }
 .jprio-highest, .jprio-high { color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
 .jprio-low, .jprio-lowest { color: var(--accent); }

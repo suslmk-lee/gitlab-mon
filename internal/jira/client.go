@@ -98,6 +98,9 @@ func (t *jiraTime) UnmarshalJSON(b []byte) error {
 type Issue struct {
 	Key            string    `json:"key"`
 	Summary        string    `json:"summary"`
+	ParentKey      string    `json:"parent_key"` // 하위 이슈인 경우 부모 키
+	ParentSummary  string    `json:"parent_summary"`
+	IsSubtask      bool      `json:"is_subtask"`
 	ProjectKey     string    `json:"project_key"`
 	ProjectName    string    `json:"project_name"`
 	Status         string    `json:"status"`
@@ -133,8 +136,15 @@ type rawIssue struct {
 			Name string `json:"name"`
 		} `json:"priority"`
 		IssueType struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Subtask bool   `json:"subtask"`
 		} `json:"issuetype"`
+		Parent *struct {
+			Key    string `json:"key"`
+			Fields struct {
+				Summary string `json:"summary"`
+			} `json:"fields"`
+		} `json:"parent"`
 		Created        jiraTime `json:"created"`
 		Updated        jiraTime `json:"updated"`
 		DueDate        string   `json:"duedate"`
@@ -163,10 +173,16 @@ func (c *Client) normalize(r rawIssue) Issue {
 	if r.Fields.Priority != nil {
 		is.Priority = r.Fields.Priority.Name
 	}
+	if r.Fields.Parent != nil {
+		is.ParentKey = r.Fields.Parent.Key
+		is.ParentSummary = r.Fields.Parent.Fields.Summary
+	}
+	// team-managed 프로젝트는 subtask 플래그 대신 parent 관계만 있을 수도 있음
+	is.IsSubtask = r.Fields.IssueType.Subtask || is.ParentKey != ""
 	return is
 }
 
-const issueFields = "summary,status,assignee,priority,issuetype,project,created,updated,duedate,resolutiondate"
+const issueFields = "summary,status,assignee,priority,issuetype,project,created,updated,duedate,resolutiondate,parent"
 
 // Transition is one allowed workflow move for an issue.
 type Transition struct {
