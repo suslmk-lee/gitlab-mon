@@ -62,6 +62,7 @@ type Snapshot struct {
 	OpenMRs     []gitlab.MergeRequest `json:"open_mrs"`
 	MergedMRs   []gitlab.MergeRequest `json:"merged_mrs"` // merged within stats window
 	Pipelines   []gitlab.Pipeline     `json:"pipelines"`  // updated within stats window
+	CodeDaily   []CodeDay             `json:"code_daily"` // 사용자×날짜 라인 변경량 (기본 브랜치)
 	Error       string                `json:"error"`
 	Warning     string                `json:"warning"`
 	NeedsConfig bool                  `json:"needs_config"`
@@ -76,20 +77,22 @@ type Progress struct {
 
 // App struct
 type App struct {
-	ctx       context.Context
-	mu        sync.Mutex
-	cfg       config.Config
-	client    *gitlab.Client
-	snap      Snapshot
-	cache     map[int]*projEvents    // projectID → cached events
-	pipeCache map[int]*projPipelines // projectID → cached pipelines
-	mrCache   map[int]*mrReview      // MR ID → cached review facts
-	cycle     int                    // poll cycle counter
-	lastSig   uint64                 // signature of the last published snapshot
+	ctx         context.Context
+	mu          sync.Mutex
+	cfg         config.Config
+	client      *gitlab.Client
+	snap        Snapshot
+	cache       map[int]*projEvents    // projectID → cached events
+	pipeCache   map[int]*projPipelines // projectID → cached pipelines
+	mrCache     map[int]*mrReview      // MR ID → cached review facts
+	commitCache map[int]*projCommits   // projectID → cached commit stats
+	cycle       int                    // poll cycle counter
+	lastSig     uint64                 // signature of the last published snapshot
 	// slow-changing metadata, refreshed every slowEvery cycles
 	lastVersion *gitlab.Version
 	lastStats   *gitlab.Statistics
 	lastGroups  []gitlab.Group
+	lastUsers   []gitlab.User
 	// notification state
 	notifyBaselined bool
 	notifiedPipes   map[int]bool
@@ -102,6 +105,7 @@ func NewApp() *App {
 		cache:         map[int]*projEvents{},
 		pipeCache:     map[int]*projPipelines{},
 		mrCache:       map[int]*mrReview{},
+		commitCache:   map[int]*projCommits{},
 		notifiedPipes: map[int]bool{},
 		knownMRs:      map[int]bool{},
 	}
@@ -114,6 +118,7 @@ func (a *App) startup(ctx context.Context) {
 	a.rebuildClient()
 	a.loadCache()
 	a.loadMRCache()
+	a.loadCommitsCache()
 	go a.pollLoop(ctx)
 }
 
@@ -249,11 +254,13 @@ func (a *App) refresh() {
 		}
 	)
 	var groups []gitlab.Group
+	var users []gitlab.User
 	if slow {
 		// 느리게 변하는 메타데이터는 slowEvery 사이클(5분)마다만 조회
 		call(func() (err error) { res.version, err = client.GetVersion(); return })
 		call(func() (err error) { res.stats, err = client.GetStatistics(); return })
 		call(func() (err error) { groups, err = client.GetAllGroups(); return })
+		call(func() (err error) { users, err = client.GetAllUsers(); return })
 	}
 	call(func() (err error) { res.projects, err = client.GetAllProjects(); return })
 	call(func() (err error) { res.openMRs, err = client.GetOpenMergeRequests(); return })
@@ -274,10 +281,14 @@ func (a *App) refresh() {
 		if groups != nil {
 			a.lastGroups = groups
 		}
+		if users != nil {
+			a.lastUsers = users
+		}
 	}
 	res.version = a.lastVersion
 	res.stats = a.lastStats
 	groups = a.lastGroups
+	users = a.lastUsers
 	a.mu.Unlock()
 
 	// Incrementally fetch events for projects whose activity changed.
@@ -289,6 +300,10 @@ func (a *App) refresh() {
 
 	// MR 리뷰 지표: updated_at이 변한 MR만 notes/approvals 재조회
 	a.collectMRReviews(client, res.openMRs, res.merged)
+
+	// 코드 변경량: 활동이 변한 프로젝트의 기본 브랜치 커밋만 증분 수집
+	a.collectCommits(client, res.projects, since)
+	codeDaily := a.aggregateCodeDaily(users, since)
 
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := make(map[int]gitlab.Project, len(res.projects))
@@ -361,6 +376,9 @@ func (a *App) refresh() {
 	if pipelines == nil {
 		pipelines = []gitlab.Pipeline{}
 	}
+	if codeDaily == nil {
+		codeDaily = []CodeDay{}
+	}
 
 	snap.Version = res.version
 	snap.Stats = res.stats
@@ -369,6 +387,7 @@ func (a *App) refresh() {
 	snap.OpenMRs = res.openMRs
 	snap.MergedMRs = res.merged
 	snap.Pipelines = pipelines
+	snap.CodeDaily = codeDaily
 	if len(res.errs) > 0 {
 		// 부분 실패도 전부 노출
 		msgs := make([]string, len(res.errs))
@@ -383,6 +402,7 @@ func (a *App) refresh() {
 	if a.publish(snap) {
 		a.saveCache() // 변경이 있을 때만 디스크에 기록
 		a.saveMRCache()
+		a.saveCommitsCache()
 	}
 }
 
@@ -689,7 +709,7 @@ func snapshotSig(s *Snapshot) uint64 {
 	for _, m := range s.OpenMRs {
 		w(m.ID, m.UpdatedAt.UnixNano(), len(m.Approvers), m.FirstReviewAt != nil)
 	}
-	w(len(s.MergedMRs), len(s.Pipelines))
+	w(len(s.MergedMRs), len(s.Pipelines), len(s.CodeDaily))
 	for _, p := range s.Pipelines {
 		w(p.ID, p.Status)
 	}

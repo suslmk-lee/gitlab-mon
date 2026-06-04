@@ -26,11 +26,12 @@ interface Pipeline {
     id: number; project_id: number; status: string; source: string; ref: string; sha: string;
     created_at: string; updated_at: string; web_url: string; project_path: string;
 }
+interface CodeDay { user: string; day: string; add: number; del: number; commits: number }
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
     events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
-    pipelines: Pipeline[];
+    pipelines: Pipeline[]; code_daily: CodeDay[];
     error: string; warning: string; needs_config: boolean;
 }
 
@@ -465,6 +466,25 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
     }, [mergedMRs, snap.open_mrs, events]);
     const reviewerMax = Math.max(1, ...reviewers.map(r => r.approvals * 2 + r.comments));
 
+    // 코드 변경량 (기본 브랜치 커밋, 사용자×날짜 → 기간 집계)
+    const codeByUser = useMemo(() => {
+        const cutDay = new Date(periodCutoff(period));
+        const cut = `${cutDay.getFullYear()}-${String(cutDay.getMonth() + 1).padStart(2, '0')}-${String(cutDay.getDate()).padStart(2, '0')}`;
+        const m = new Map<string, { add: number; del: number; commits: number }>();
+        for (const r of snap.code_daily) {
+            if (r.day < cut) continue;
+            let row = m.get(r.user);
+            if (!row) { row = {add: 0, del: 0, commits: 0}; m.set(r.user, row); }
+            row.add += r.add; row.del += r.del; row.commits += r.commits;
+        }
+        return [...m.entries()]
+            .sort((a, b) => (b[1].add + b[1].del) - (a[1].add + a[1].del))
+            .slice(0, 10);
+    }, [snap.code_daily, period]);
+    const codeMax = Math.max(1, ...codeByUser.map(([, r]) => r.add + r.del));
+    const codeTotals = codeByUser.reduce((acc, [, r]) => ({add: acc.add + r.add, del: acc.del + r.del}), {add: 0, del: 0});
+    const fmtN = (n: number) => n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
     const top = users.slice(0, 10);
     const scoreMax = Math.max(1, ...top.map(u => u.score));
     const heatMax = Math.max(1, ...top.flatMap(u => [...u.byDay.values()]));
@@ -598,6 +618,26 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 </section>
             </div>
 
+            {/* 코드 변경량 */}
+            <section className="stat-block">
+                <h3>코드 변경량 Top 10
+                    <span className="hint">기본 브랜치 커밋 기준 · 기간 합계 +{fmtN(codeTotals.add)} / -{fmtN(codeTotals.del)}</span>
+                </h3>
+                {codeByUser.map(([user, r]) => (
+                    <div key={user} className="lb-row">
+                        <span className="lb-name drill" title={`${user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(user)}>{user}</span>
+                        <div className="lb-bar-wrap code-bar-wrap">
+                            <div className="code-bar-add" style={{width: `${(r.add / codeMax) * 100}%`}}/>
+                            <div className="code-bar-del" style={{width: `${(r.del / codeMax) * 100}%`}}/>
+                        </div>
+                        <span className="lb-score code-add">+{fmtN(r.add)}</span>
+                        <span className="lb-score code-del">-{fmtN(r.del)}</span>
+                        <span className="lb-detail">커밋 {r.commits}</span>
+                    </div>
+                ))}
+                {codeByUser.length === 0 && <div className="empty">기간 내 커밋 없음</div>}
+            </section>
+
             {/* 리뷰어 리더보드 */}
             <section className="stat-block">
                 <h3>리뷰어 활동 Top 10 <span className="hint">승인 ×2 + MR 댓글 기준 · 승인은 현재 시점 집계</span></h3>
@@ -651,6 +691,7 @@ function App() {
         open_mrs: s.open_mrs ?? [],
         merged_mrs: s.merged_mrs ?? [],
         pipelines: s.pipelines ?? [],
+        code_daily: s.code_daily ?? [],
     });
     const isReady = (s: any) =>
         s && s.fetched_at && !String(s.fetched_at).startsWith('0001');

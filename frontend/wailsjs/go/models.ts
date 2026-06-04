@@ -290,6 +290,26 @@ export namespace gitlab {
 
 export namespace main {
 	
+	export class CodeDay {
+	    user: string;
+	    day: string;
+	    add: number;
+	    del: number;
+	    commits: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CodeDay(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.user = source["user"];
+	        this.day = source["day"];
+	        this.add = source["add"];
+	        this.del = source["del"];
+	        this.commits = source["commits"];
+	    }
+	}
 	export class Snapshot {
 	    // Go type: time
 	    fetched_at: any;
@@ -301,6 +321,7 @@ export namespace main {
 	    open_mrs: gitlab.MergeRequest[];
 	    merged_mrs: gitlab.MergeRequest[];
 	    pipelines: gitlab.Pipeline[];
+	    code_daily: CodeDay[];
 	    error: string;
 	    warning: string;
 	    needs_config: boolean;
@@ -320,6 +341,7 @@ export namespace main {
 	        this.open_mrs = this.convertValues(source["open_mrs"], gitlab.MergeRequest);
 	        this.merged_mrs = this.convertValues(source["merged_mrs"], gitlab.MergeRequest);
 	        this.pipelines = this.convertValues(source["pipelines"], gitlab.Pipeline);
+	        this.code_daily = this.convertValues(source["code_daily"], CodeDay);
 	        this.error = source["error"];
 	        this.warning = source["warning"];
 	        this.needs_config = source["needs_config"];

@@ -340,6 +340,20 @@ html, body, #root {
     background: linear-gradient(90deg, rgba(147, 51, 234, 0.85), rgba(192, 132, 252, 0.95));
     box-shadow: 0 0 12px rgba(192, 132, 252, 0.4);
 }
+
+/* 코드 변경량: +추가(초록)/-삭제(빨강) 겹침 막대 */
+.code-bar-wrap { display: flex; flex-direction: column; gap: 1px; height: 16px; }
+.code-bar-add, .code-bar-del { height: 7px; border-radius: 4px; min-width: 1px; }
+.code-bar-add {
+    background: linear-gradient(90deg, rgba(35, 134, 54, 0.85), rgba(74, 222, 128, 0.95));
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.35);
+}
+.code-bar-del {
+    background: linear-gradient(90deg, rgba(220, 38, 38, 0.8), rgba(248, 113, 113, 0.9));
+    box-shadow: 0 0 8px rgba(248, 113, 113, 0.35);
+}
+.code-add { color: var(--green); width: 56px; }
+.code-del { color: var(--red); width: 56px; }
 .lb-score { width: 44px; text-align: right; font-weight: 700; font-size: 12px; flex-shrink: 0; }
 .lb-detail { color: var(--muted); font-size: 11px; width: 260px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

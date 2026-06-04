@@ -137,6 +137,25 @@ type MergeRequest struct {
 	Approvers     []string   `json:"approvers"` // 현재 승인자 username 목록
 }
 
+type Commit struct {
+	ID          string    `json:"id"`
+	AuthorName  string    `json:"author_name"`
+	AuthorEmail string    `json:"author_email"`
+	CreatedAt   time.Time `json:"created_at"`
+	Stats       *struct {
+		Additions int `json:"additions"`
+		Deletions int `json:"deletions"`
+	} `json:"stats"`
+}
+
+type User struct {
+	ID          int    `json:"id"`
+	Username    string `json:"username"`
+	Name        string `json:"name"`
+	Email       string `json:"email"`        // admin only
+	PublicEmail string `json:"public_email"`
+}
+
 type Note struct {
 	ID        int       `json:"id"`
 	Body      string    `json:"body"`
@@ -268,6 +287,53 @@ func (c *Client) GetProjectPipelines(projectID int, updatedAfter string, maxPage
 		}
 		var batch []Pipeline
 		h, err := c.get("/projects/"+strconv.Itoa(projectID)+"/pipelines", q, &batch)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, batch...)
+		next := h.Get("x-next-page")
+		if next == "" || next == "0" || len(batch) == 0 {
+			break
+		}
+	}
+	return all, nil
+}
+
+// GetProjectCommits returns default-branch commits since the given RFC3339
+// time with line stats included (with_stats), newest first, up to maxPages*100.
+func (c *Client) GetProjectCommits(projectID int, since string, maxPages int) ([]Commit, error) {
+	var all []Commit
+	for page := 1; page <= maxPages; page++ {
+		q := url.Values{}
+		q.Set("per_page", "100")
+		q.Set("page", strconv.Itoa(page))
+		q.Set("with_stats", "true")
+		if since != "" {
+			q.Set("since", since)
+		}
+		var batch []Commit
+		h, err := c.get("/projects/"+strconv.Itoa(projectID)+"/repository/commits", q, &batch)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, batch...)
+		next := h.Get("x-next-page")
+		if next == "" || next == "0" || len(batch) == 0 {
+			break
+		}
+	}
+	return all, nil
+}
+
+// GetAllUsers pages through every user (admin sees emails).
+func (c *Client) GetAllUsers() ([]User, error) {
+	var all []User
+	for page := 1; ; page++ {
+		q := url.Values{}
+		q.Set("per_page", "100")
+		q.Set("page", strconv.Itoa(page))
+		var batch []User
+		h, err := c.get("/users", q, &batch)
 		if err != nil {
 			return all, err
 		}
