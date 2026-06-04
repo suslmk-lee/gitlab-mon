@@ -21,14 +21,19 @@ interface Stats {
     forks: string; issues: string; merge_requests: string; users: string;
     projects: string; groups: string; active_users: string;
 }
+interface Pipeline {
+    id: number; project_id: number; status: string; source: string; ref: string; sha: string;
+    created_at: string; updated_at: string; web_url: string; project_path: string;
+}
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
     events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
+    pipelines: Pipeline[];
     error: string; warning: string; needs_config: boolean;
 }
 
-interface Progress { done: number; total: number }
+interface Progress { phase: string; done: number; total: number }
 
 // ---- Helpers ----
 function timeAgo(iso: string): string {
@@ -158,6 +163,168 @@ function SetupView({onSaved}: { onSaved: () => void }) {
     );
 }
 
+// ---- Pipeline view ----
+const PIPE_RUNNING = new Set(['running', 'pending', 'created', 'preparing', 'waiting_for_resource', 'scheduled']);
+
+const PIPE_META: Record<string, { label: string; color: string }> = {
+    success:  {label: '성공',   color: 'var(--green)'},
+    failed:   {label: '실패',   color: 'var(--red)'},
+    running:  {label: '실행 중', color: 'var(--accent)'},
+    pending:  {label: '대기',   color: 'var(--orange)'},
+    canceled: {label: '취소',   color: 'var(--muted)'},
+    skipped:  {label: '건너뜀',  color: 'var(--muted)'},
+};
+const pipeMeta = (s: string) =>
+    PIPE_META[s] ?? (PIPE_RUNNING.has(s) ? PIPE_META.running : {label: s, color: 'var(--muted)'});
+
+function fmtDur(ms: number): string {
+    const h = ms / 3600_000;
+    if (h < 1) return `${Math.round(ms / 60_000)}분`;
+    if (h < 48) return `${h.toFixed(1)}시간`;
+    return `${(h / 24).toFixed(1)}일`;
+}
+
+function CIView({snap}: { snap: Snapshot }) {
+    const pipes = snap.pipelines;
+    const days = useMemo(() => lastNDays(30), [snap.fetched_at]);
+
+    const finished = pipes.filter(p => p.status === 'success' || p.status === 'failed');
+    const success = pipes.filter(p => p.status === 'success').length;
+    const failed = pipes.filter(p => p.status === 'failed');
+    const running = pipes.filter(p => PIPE_RUNNING.has(p.status));
+    const rate = finished.length ? Math.round((success / finished.length) * 100) : null;
+    // 소요시간은 created→updated 근사치 (대기시간 포함)
+    const durs = finished.map(p => new Date(p.updated_at).getTime() - new Date(p.created_at).getTime()).filter(d => d > 0);
+    const avgDur = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : 0;
+
+    // 프로젝트별 성공률
+    const byProj = useMemo(() => {
+        const m = new Map<string, { total: number; ok: number; fail: number }>();
+        for (const p of pipes) {
+            const k = p.project_path || `#${p.project_id}`;
+            let r = m.get(k);
+            if (!r) { r = {total: 0, ok: 0, fail: 0}; m.set(k, r); }
+            r.total++;
+            if (p.status === 'success') r.ok++;
+            if (p.status === 'failed') r.fail++;
+        }
+        return [...m.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 12);
+    }, [pipes]);
+    const projMax = Math.max(1, ...byProj.map(([, r]) => r.total));
+
+    // 날짜별 결과 스택
+    const daily = useMemo(() => {
+        const m = new Map<string, { ok: number; fail: number; other: number }>();
+        for (const d of days) m.set(d, {ok: 0, fail: 0, other: 0});
+        for (const p of pipes) {
+            const row = m.get(dayKey(p.created_at));
+            if (!row) continue;
+            if (p.status === 'success') row.ok++;
+            else if (p.status === 'failed') row.fail++;
+            else row.other++;
+        }
+        return m;
+    }, [pipes, days]);
+    const dailyMax = Math.max(1, ...[...daily.values()].map(r => r.ok + r.fail + r.other));
+
+    const recentFailed = failed.slice(0, 20);
+
+    return (
+        <div className="stats scroll">
+            <div className="cards">
+                <div className="card"><div className="card-v">{pipes.length}</div><div className="card-l">파이프라인 (30일)</div></div>
+                <div className="card"><div className="card-v" style={{WebkitTextFillColor: rate !== null && rate < 70 ? 'var(--red)' : undefined}}>{rate !== null ? `${rate}%` : '—'}</div><div className="card-l">성공률</div></div>
+                <div className="card"><div className="card-v">{failed.length}</div><div className="card-l">실패</div></div>
+                <div className="card"><div className="card-v">{running.length}</div><div className="card-l">실행/대기 중</div></div>
+                <div className="card"><div className="card-v">{durs.length ? fmtDur(avgDur) : '—'}</div><div className="card-l">평균 소요 (근사)</div></div>
+            </div>
+
+            {pipes.length === 0 && (
+                <section className="stat-block">
+                    <div className="empty">최근 30일 내 파이프라인이 없습니다. CI를 사용하는 프로젝트가 활동하면 여기에 표시됩니다.</div>
+                </section>
+            )}
+
+            {running.length > 0 && (
+                <section className="stat-block">
+                    <h3>실행/대기 중 <span className="count">{running.length}</span></h3>
+                    {running.map(p => <PipeRow key={p.id} p={p}/>)}
+                </section>
+            )}
+
+            <div className="stat-cols">
+                <section className="stat-block">
+                    <h3>날짜별 파이프라인 결과</h3>
+                    <div className="bars">
+                        {days.map(d => {
+                            const row = daily.get(d)!;
+                            const total = row.ok + row.fail + row.other;
+                            return (
+                                <div key={d} className="bar-col" title={`${d} · 성공 ${row.ok}, 실패 ${row.fail}, 기타 ${row.other}`}>
+                                    <div className="bar-stack">
+                                        {row.ok > 0 && <div style={{height: `${(row.ok / dailyMax) * 100}%`, background: 'var(--green)'}}/>}
+                                        {row.fail > 0 && <div style={{height: `${(row.fail / dailyMax) * 100}%`, background: 'var(--red)'}}/>}
+                                        {row.other > 0 && <div style={{height: `${(row.other / dailyMax) * 100}%`, background: 'var(--muted)'}}/>}
+                                    </div>
+                                    <span className="bar-x">{total > 0 || d.slice(8) === '01' ? d.slice(8) : ''}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="legend">
+                        <span><i style={{background: 'var(--green)'}}/>성공</span>
+                        <span><i style={{background: 'var(--red)'}}/>실패</span>
+                        <span><i style={{background: 'var(--muted)'}}/>기타</span>
+                    </div>
+                </section>
+
+                <section className="stat-block">
+                    <h3>프로젝트별 성공률 <span className="hint">파이프라인 수 기준 Top 12</span></h3>
+                    {byProj.map(([path, r]) => {
+                        const pr = r.ok + r.fail > 0 ? Math.round((r.ok / (r.ok + r.fail)) * 100) : null;
+                        return (
+                            <div key={path} className="lb-row">
+                                <span className="lb-name lb-name-wide" title={path}>{path}</span>
+                                <div className="lb-bar-wrap">
+                                    <div className="lb-bar" style={{
+                                        width: `${(r.total / projMax) * 100}%`,
+                                        background: pr !== null && pr < 70
+                                            ? 'linear-gradient(90deg, rgba(220,38,38,0.85), rgba(248,113,113,0.95))'
+                                            : undefined,
+                                    }}/>
+                                </div>
+                                <span className="lb-score">{r.total}</span>
+                                <span className="lb-detail">{pr !== null ? `성공률 ${pr}%` : '—'} · 실패 {r.fail}</span>
+                            </div>
+                        );
+                    })}
+                    {byProj.length === 0 && <div className="empty">데이터 없음</div>}
+                </section>
+            </div>
+
+            {recentFailed.length > 0 && (
+                <section className="stat-block">
+                    <h3>최근 실패 <span className="count">{failed.length}</span></h3>
+                    {recentFailed.map(p => <PipeRow key={p.id} p={p}/>)}
+                </section>
+            )}
+        </div>
+    );
+}
+
+function PipeRow({p}: { p: Pipeline }) {
+    const m = pipeMeta(p.status);
+    return (
+        <div className="pipe" onClick={() => OpenURL(p.web_url)}>
+            <span className={`pipe-dot ${PIPE_RUNNING.has(p.status) ? 'pipe-pulse' : ''}`} style={{background: m.color}}/>
+            <span className="pipe-status" style={{color: m.color}}>{m.label}</span>
+            <span className="pipe-proj">{p.project_path || `#${p.project_id}`}</span>
+            <span className="pipe-ref" title={p.sha}>{p.ref}</span>
+            <span className="time">{timeAgo(p.created_at)}</span>
+        </div>
+    );
+}
+
 // ---- Stats view ----
 function StatsView({snap}: { snap: Snapshot }) {
     const [includeBots, setIncludeBots] = useState(false);
@@ -203,12 +370,6 @@ function StatsView({snap}: { snap: Snapshot }) {
         .filter(m => m.merged_at)
         .map(m => new Date(m.merged_at!).getTime() - new Date(m.created_at).getTime());
     const avgLead = leadTimes.length ? leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length : 0;
-    const fmtDur = (ms: number) => {
-        const h = ms / 3600_000;
-        if (h < 1) return `${Math.round(ms / 60_000)}분`;
-        if (h < 48) return `${h.toFixed(1)}시간`;
-        return `${(h / 24).toFixed(1)}일`;
-    };
     const openAges = snap.open_mrs.map(m => Date.now() - new Date(m.created_at).getTime());
     const avgOpenAge = openAges.length ? openAges.reduce((a, b) => a + b, 0) / openAges.length : 0;
     const mrOpened30d = snap.events.filter(e => eventKind(e) === 'mr' && e.action_name === 'opened').length;
@@ -339,7 +500,7 @@ const FEED_LIMIT = 300;
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [tab, setTab] = useState<'feed' | 'stats'>('feed');
+    const [tab, setTab] = useState<'feed' | 'stats' | 'ci'>('feed');
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
     const [, setTick] = useState(0);
@@ -351,6 +512,7 @@ function App() {
         projects: s.projects ?? [],
         open_mrs: s.open_mrs ?? [],
         merged_mrs: s.merged_mrs ?? [],
+        pipelines: s.pipelines ?? [],
     });
     const isReady = (s: any) =>
         s && s.fetched_at && !String(s.fetched_at).startsWith('0001');
@@ -395,7 +557,7 @@ function App() {
                     <div>GitLab 데이터 불러오는 중…</div>
                     {progress && <>
                         <div className="pbar"><div className="pbar-fill" style={{width: `${(progress.done / progress.total) * 100}%`}}/></div>
-                        <div className="pbar-text">프로젝트 이벤트 수집 {progress.done} / {progress.total}</div>
+                        <div className="pbar-text">{progress.phase} 수집 {progress.done} / {progress.total}</div>
                     </>}
                 </div>
             </div>
@@ -416,6 +578,7 @@ function App() {
                     <nav className="tabs">
                         <button className={tab === 'feed' ? 'tab tab-on' : 'tab'} onClick={() => setTab('feed')}>활동 피드</button>
                         <button className={tab === 'stats' ? 'tab tab-on' : 'tab'} onClick={() => setTab('stats')}>통계</button>
+                        <button className={tab === 'ci' ? 'tab tab-on' : 'tab'} onClick={() => setTab('ci')}>파이프라인</button>
                     </nav>
                 </div>
                 <div className="chips">
@@ -427,7 +590,7 @@ function App() {
                     </>}
                     <button className="btn btn-sm" onClick={() => Refresh()}>↻ 새로고침</button>
                     <span className="fetched">
-                        {progress ? `수집 중 ${progress.done}/${progress.total}` : `${timeAgo(snap.fetched_at)} 갱신`}
+                        {progress ? `${progress.phase} 수집 ${progress.done}/${progress.total}` : `${timeAgo(snap.fetched_at)} 갱신`}
                     </span>
                 </div>
             </header>
@@ -435,7 +598,7 @@ function App() {
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
             {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap}/> : (
+            {tab === 'stats' ? <StatsView snap={snap}/> : tab === 'ci' ? <CIView snap={snap}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">

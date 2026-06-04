@@ -83,6 +83,15 @@ func CachePath() (string, error) {
 	return filepath.Join(dir, "gitlab-mon", "events-cache.json"), nil
 }
 
+// PipelineCachePath returns the pipelines-cache file location.
+func PipelineCachePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "gitlab-mon", "pipelines-cache.json"), nil
+}
+
 func applyEnvFile(path string, cfg *Config) {
 	f, err := os.Open(path)
 	if err != nil {

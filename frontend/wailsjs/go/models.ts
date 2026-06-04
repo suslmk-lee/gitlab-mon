@@ -150,6 +150,56 @@ export namespace gitlab {
 		    return a;
 		}
 	}
+	export class Pipeline {
+	    id: number;
+	    project_id: number;
+	    status: string;
+	    source: string;
+	    ref: string;
+	    sha: string;
+	    // Go type: time
+	    created_at: any;
+	    // Go type: time
+	    updated_at: any;
+	    web_url: string;
+	    project_path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Pipeline(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.project_id = source["project_id"];
+	        this.status = source["status"];
+	        this.source = source["source"];
+	        this.ref = source["ref"];
+	        this.sha = source["sha"];
+	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.updated_at = this.convertValues(source["updated_at"], null);
+	        this.web_url = source["web_url"];
+	        this.project_path = source["project_path"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Project {
 	    id: number;
 	    path_with_namespace: string;
@@ -243,6 +293,7 @@ export namespace main {
 	    projects: gitlab.Project[];
 	    open_mrs: gitlab.MergeRequest[];
 	    merged_mrs: gitlab.MergeRequest[];
+	    pipelines: gitlab.Pipeline[];
 	    error: string;
 	    warning: string;
 	    needs_config: boolean;
@@ -261,6 +312,7 @@ export namespace main {
 	        this.projects = this.convertValues(source["projects"], gitlab.Project);
 	        this.open_mrs = this.convertValues(source["open_mrs"], gitlab.MergeRequest);
 	        this.merged_mrs = this.convertValues(source["merged_mrs"], gitlab.MergeRequest);
+	        this.pipelines = this.convertValues(source["pipelines"], gitlab.Pipeline);
 	        this.error = source["error"];
 	        this.warning = source["warning"];
 	        this.needs_config = source["needs_config"];

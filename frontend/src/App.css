@@ -405,6 +405,31 @@ html, body, #root {
 }
 .pbar-text { color: var(--muted); font-size: 11px; }
 
+/* ---- Pipeline rows ---- */
+.pipe {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 4px; cursor: pointer;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    transition: background 0.15s;
+}
+.pipe:hover { background: rgba(255, 255, 255, 0.045); }
+.pipe-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.pipe-pulse { animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 8px currentColor; }
+    50% { opacity: 0.4; box-shadow: none; }
+}
+.pipe-status { width: 52px; flex-shrink: 0; font-size: 11.5px; font-weight: 600; }
+.pipe-proj { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.pipe-ref {
+    color: var(--muted); font-size: 11px;
+    background: rgba(0, 0, 0, 0.25); border: 1px solid var(--stroke);
+    border-radius: 5px; padding: 1px 7px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
 .warn-banner {
     background: rgba(251, 191, 36, 0.08);
     backdrop-filter: blur(12px);

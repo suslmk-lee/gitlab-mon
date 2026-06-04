@@ -32,6 +32,14 @@ type projEvents struct {
 	Events       []gitlab.Event `json:"events"`
 }
 
+// projPipelines caches one project's pipelines within the stats window.
+type projPipelines struct {
+	LastFetch    time.Time         `json:"last_fetch"`
+	LastActivity time.Time         `json:"last_activity"`
+	HasCI        bool              `json:"has_ci"`
+	Pipelines    []gitlab.Pipeline `json:"pipelines"`
+}
+
 // Snapshot is the full dashboard state pushed to the frontend.
 type Snapshot struct {
 	FetchedAt   time.Time             `json:"fetched_at"`
@@ -42,30 +50,36 @@ type Snapshot struct {
 	Projects    []gitlab.Project      `json:"projects"`
 	OpenMRs     []gitlab.MergeRequest `json:"open_mrs"`
 	MergedMRs   []gitlab.MergeRequest `json:"merged_mrs"` // merged within stats window
+	Pipelines   []gitlab.Pipeline     `json:"pipelines"`  // updated within stats window
 	Error       string                `json:"error"`
 	Warning     string                `json:"warning"`
 	NeedsConfig bool                  `json:"needs_config"`
 }
 
-// Progress reports event-collection progress to the frontend.
+// Progress reports collection progress to the frontend.
 type Progress struct {
-	Done  int `json:"done"`
-	Total int `json:"total"`
+	Phase string `json:"phase"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
 }
 
 // App struct
 type App struct {
-	ctx    context.Context
-	mu     sync.Mutex
-	cfg    config.Config
-	client *gitlab.Client
-	snap   Snapshot
-	cache  map[int]*projEvents // projectID → cached events
+	ctx       context.Context
+	mu        sync.Mutex
+	cfg       config.Config
+	client    *gitlab.Client
+	snap      Snapshot
+	cache     map[int]*projEvents    // projectID → cached events
+	pipeCache map[int]*projPipelines // projectID → cached pipelines
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
-	return &App{cache: map[int]*projEvents{}}
+	return &App{
+		cache:     map[int]*projEvents{},
+		pipeCache: map[int]*projPipelines{},
+	}
 }
 
 // startup is called when the app starts.
@@ -87,40 +101,56 @@ func (a *App) rebuildClient() {
 
 // ---- Cache persistence ----
 
+func loadJSONFile(path string, v any) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return json.Unmarshal(b, v) == nil
+}
+
+func saveJSONFile(path string, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
+		return
+	}
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, path)
+	}
+}
+
 func (a *App) loadCache() {
-	p, err := config.CachePath()
-	if err != nil {
-		return
+	if p, err := config.CachePath(); err == nil {
+		cache := map[int]*projEvents{}
+		if loadJSONFile(p, &cache) {
+			a.mu.Lock()
+			a.cache = cache
+			a.mu.Unlock()
+		}
 	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return
-	}
-	cache := map[int]*projEvents{}
-	if json.Unmarshal(b, &cache) == nil {
-		a.mu.Lock()
-		a.cache = cache
-		a.mu.Unlock()
+	if p, err := config.PipelineCachePath(); err == nil {
+		cache := map[int]*projPipelines{}
+		if loadJSONFile(p, &cache) {
+			a.mu.Lock()
+			a.pipeCache = cache
+			a.mu.Unlock()
+		}
 	}
 }
 
 func (a *App) saveCache() {
-	p, err := config.CachePath()
-	if err != nil {
-		return
-	}
+	// Marshal under the lock so concurrent refreshes can't mutate mid-encode.
 	a.mu.Lock()
-	b, err := json.Marshal(a.cache)
-	a.mu.Unlock()
-	if err != nil {
-		return
+	defer a.mu.Unlock()
+	if p, err := config.CachePath(); err == nil {
+		saveJSONFile(p, a.cache)
 	}
-	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
-		return
-	}
-	tmp := p + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, p)
+	if p, err := config.PipelineCachePath(); err == nil {
+		saveJSONFile(p, a.pipeCache)
 	}
 }
 
@@ -193,6 +223,9 @@ func (a *App) refresh() {
 	// Incrementally fetch events for projects whose activity changed.
 	events, capped := a.collectEvents(client, res.projects, since, afterDate)
 
+	// Incrementally fetch pipelines for CI-enabled projects.
+	pipelines := a.collectPipelines(client, res.projects, since)
+
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := make(map[int]gitlab.Project, len(res.projects))
 	for _, p := range res.projects {
@@ -208,6 +241,11 @@ func (a *App) refresh() {
 			events[i].ProjectURL = p.WebURL
 		}
 		resolveBot(&events[i].Author, byID, groupByID)
+	}
+	for i := range pipelines {
+		if p, ok := byID[pipelines[i].ProjectID]; ok {
+			pipelines[i].ProjectPath = p.PathWithNamespace
+		}
 	}
 	for _, mrs := range [][]gitlab.MergeRequest{res.openMRs, res.merged} {
 		for i := range mrs {
@@ -248,6 +286,9 @@ func (a *App) refresh() {
 	if res.merged == nil {
 		res.merged = []gitlab.MergeRequest{}
 	}
+	if pipelines == nil {
+		pipelines = []gitlab.Pipeline{}
+	}
 
 	snap.Version = res.version
 	snap.Stats = res.stats
@@ -255,6 +296,7 @@ func (a *App) refresh() {
 	snap.Projects = res.projects
 	snap.OpenMRs = res.openMRs
 	snap.MergedMRs = res.merged
+	snap.Pipelines = pipelines
 	if len(res.errs) > 0 {
 		snap.Error = res.errs[0].Error()
 	}
@@ -371,7 +413,7 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 
 	// Fetch changed projects with bounded concurrency, reporting progress.
 	total := len(jobs)
-	a.emitProgress(0, total)
+	a.emitProgress("이벤트", 0, total)
 	var (
 		done      int
 		cappedIDs []int
@@ -401,7 +443,7 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 			done++
 			d := done
 			a.mu.Unlock()
-			a.emitProgress(d, total)
+			a.emitProgress("이벤트", d, total)
 		}(p)
 	}
 	wg.Wait()
@@ -422,12 +464,111 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 	return all, cappedIDs
 }
 
-func (a *App) emitProgress(done, total int) {
+// collectPipelines keeps a per-project pipeline cache for the stats window.
+// CI-enabled projects are polled incrementally (updated_after the last fetch);
+// projects without CI are re-checked only when their activity changes.
+func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project, since time.Time) []gitlab.Pipeline {
+	type job struct {
+		p     gitlab.Project
+		after time.Time
+	}
+	a.mu.Lock()
+	var jobs []job
+	active := make(map[int]bool, len(projects))
+	for _, p := range projects {
+		if p.LastActivityAt.Before(since) {
+			continue
+		}
+		active[p.ID] = true
+		c, ok := a.pipeCache[p.ID]
+		switch {
+		case !ok:
+			jobs = append(jobs, job{p, since}) // first sight: full window
+		case c.HasCI:
+			// overlap 10m so status transitions are never missed
+			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
+		case p.LastActivityAt.After(c.LastActivity):
+			jobs = append(jobs, job{p, since}) // CI may have been enabled since
+		}
+	}
+	for id := range a.pipeCache {
+		if !active[id] {
+			delete(a.pipeCache, id)
+		}
+	}
+	a.mu.Unlock()
+
+	total := len(jobs)
+	if total > 0 {
+		a.emitProgress("파이프라인", 0, total)
+	}
+	var (
+		done int
+		sem  = make(chan struct{}, fetchWorkers)
+		wg   sync.WaitGroup
+	)
+	now := time.Now()
+	for _, j := range jobs {
+		wg.Add(1)
+		go func(j job) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			fresh, err := client.GetProjectPipelines(j.p.ID, j.after.UTC().Format(time.RFC3339), 3)
+
+			a.mu.Lock()
+			if err == nil {
+				c := a.pipeCache[j.p.ID]
+				if c == nil {
+					c = &projPipelines{}
+					a.pipeCache[j.p.ID] = c
+				}
+				// merge fresh over cached, dedupe by ID (fresh wins: status moved)
+				seen := make(map[int]bool, len(fresh))
+				for _, pl := range fresh {
+					seen[pl.ID] = true
+				}
+				merged := fresh
+				for _, pl := range c.Pipelines {
+					if !seen[pl.ID] && !pl.UpdatedAt.Before(since) {
+						merged = append(merged, pl)
+					}
+				}
+				sort.Slice(merged, func(x, y int) bool { return merged[x].CreatedAt.After(merged[y].CreatedAt) })
+				c.Pipelines = merged
+				c.LastFetch = now
+				c.LastActivity = j.p.LastActivityAt
+				c.HasCI = len(merged) > 0
+			}
+			done++
+			d := done
+			a.mu.Unlock()
+			a.emitProgress("파이프라인", d, total)
+		}(j)
+	}
+	wg.Wait()
+
+	a.mu.Lock()
+	var all []gitlab.Pipeline
+	for _, c := range a.pipeCache {
+		for _, pl := range c.Pipelines {
+			if !pl.UpdatedAt.Before(since) {
+				all = append(all, pl)
+			}
+		}
+	}
+	a.mu.Unlock()
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
+	return all
+}
+
+func (a *App) emitProgress(phase string, done, total int) {
 	a.mu.Lock()
 	ctx := a.ctx
 	a.mu.Unlock()
 	if ctx != nil {
-		runtime.EventsEmit(ctx, "progress", Progress{Done: done, Total: total})
+		runtime.EventsEmit(ctx, "progress", Progress{Phase: phase, Done: done, Total: total})
 	}
 }
 

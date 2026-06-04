@@ -134,6 +134,20 @@ type MergeRequest struct {
 	ProjectPath string `json:"project_path"`
 }
 
+type Pipeline struct {
+	ID        int       `json:"id"`
+	ProjectID int       `json:"project_id"`
+	Status    string    `json:"status"`
+	Source    string    `json:"source"`
+	Ref       string    `json:"ref"`
+	SHA       string    `json:"sha"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	WebURL    string    `json:"web_url"`
+	// Enriched locally
+	ProjectPath string `json:"project_path"`
+}
+
 // ---- API calls ----
 
 func (c *Client) GetVersion() (*Version, error) {
@@ -218,6 +232,31 @@ func (c *Client) GetAllGroups() ([]Group, error) {
 		q.Set("page", strconv.Itoa(page))
 		var batch []Group
 		h, err := c.get("/groups", q, &batch)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, batch...)
+		next := h.Get("x-next-page")
+		if next == "" || next == "0" || len(batch) == 0 {
+			break
+		}
+	}
+	return all, nil
+}
+
+// GetProjectPipelines returns a project's pipelines updated after the given
+// RFC3339 time, newest first, up to maxPages*100.
+func (c *Client) GetProjectPipelines(projectID int, updatedAfter string, maxPages int) ([]Pipeline, error) {
+	var all []Pipeline
+	for page := 1; page <= maxPages; page++ {
+		q := url.Values{}
+		q.Set("per_page", "100")
+		q.Set("page", strconv.Itoa(page))
+		if updatedAfter != "" {
+			q.Set("updated_after", updatedAfter)
+		}
+		var batch []Pipeline
+		h, err := c.get("/projects/"+strconv.Itoa(projectID)+"/pipelines", q, &batch)
 		if err != nil {
 			return all, err
 		}
