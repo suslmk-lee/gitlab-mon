@@ -233,6 +233,66 @@ func (c *Client) GetIssue(key string) (Issue, error) {
 	return c.normalize(r), nil
 }
 
+// GetIssueDescription fetches an issue's description as plain text
+// (Jira Cloud stores it as ADF — Atlassian Document Format).
+func (c *Client) GetIssueDescription(key string) (string, error) {
+	q := url.Values{}
+	q.Set("fields", "description")
+	var resp struct {
+		Fields struct {
+			Description json.RawMessage `json:"description"`
+		} `json:"fields"`
+	}
+	if err := c.get("/rest/api/3/issue/"+key, q, &resp); err != nil {
+		return "", err
+	}
+	return adfToText(resp.Fields.Description), nil
+}
+
+// adfToText flattens an ADF document into readable plain text.
+func adfToText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	type node struct {
+		Type    string          `json:"type"`
+		Text    string          `json:"text"`
+		Content []node          `json:"content"`
+		Attrs   json.RawMessage `json:"attrs"`
+	}
+	var root node
+	if json.Unmarshal(raw, &root) != nil {
+		return ""
+	}
+	var sb strings.Builder
+	var walk func(n node, depth int)
+	walk = func(n node, depth int) {
+		switch n.Type {
+		case "text":
+			sb.WriteString(n.Text)
+		case "hardBreak":
+			sb.WriteString("\n")
+		case "listItem":
+			sb.WriteString(strings.Repeat("  ", depth) + "• ")
+		case "rule":
+			sb.WriteString("\n———\n")
+		}
+		nextDepth := depth
+		if n.Type == "bulletList" || n.Type == "orderedList" {
+			nextDepth++
+		}
+		for _, ch := range n.Content {
+			walk(ch, nextDepth)
+		}
+		switch n.Type {
+		case "paragraph", "heading", "listItem", "codeBlock", "blockquote":
+			sb.WriteString("\n")
+		}
+	}
+	walk(root, 0)
+	return strings.TrimSpace(sb.String())
+}
+
 // SearchIssues runs a JQL query, following nextPageToken pagination,
 // up to maxPages*100 issues.
 func (c *Client) SearchIssues(jql string, maxPages int) ([]Issue, error) {

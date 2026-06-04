@@ -354,6 +354,24 @@ export namespace jira {
 		    return a;
 		}
 	}
+	export class Transition {
+	    id: string;
+	    name: string;
+	    to_status: string;
+	    to_category: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Transition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.to_status = source["to_status"];
+	        this.to_category = source["to_category"];
+	    }
+	}
 
 }
 
@@ -378,6 +396,40 @@ export namespace main {
 	        this.del = source["del"];
 	        this.commits = source["commits"];
 	    }
+	}
+	export class JiraIssueDetail {
+	    description: string;
+	    transitions: jira.Transition[];
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new JiraIssueDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.description = source["description"];
+	        this.transitions = this.convertValues(source["transitions"], jira.Transition);
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Snapshot {
 	    // Go type: time

@@ -134,6 +134,35 @@ func (a *App) JiraMove(key, targetStatus string) string {
 	return ""
 }
 
+// JiraIssueDetail is returned to the frontend issue popup.
+type JiraIssueDetail struct {
+	Description string            `json:"description"`
+	Transitions []jira.Transition `json:"transitions"`
+	Error       string            `json:"error"`
+}
+
+// JiraDetail fetches an issue's description and allowed transitions
+// for the detail popup (2 requests, on demand only).
+func (a *App) JiraDetail(key string) JiraIssueDetail {
+	a.mu.Lock()
+	jc := a.jiraClient
+	a.mu.Unlock()
+	if jc == nil {
+		return JiraIssueDetail{Error: "Jira가 설정되지 않았습니다"}
+	}
+	var out JiraIssueDetail
+	desc, err := jc.GetIssueDescription(key)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	out.Description = desc
+	if trs, err := jc.GetTransitions(key); err == nil {
+		out.Transitions = trs
+	}
+	return out
+}
+
 // aggregateJira flattens the issue cache, newest-updated first.
 func (a *App) aggregateJira() []jira.Issue {
 	a.mu.Lock()

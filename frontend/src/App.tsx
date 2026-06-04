@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -212,34 +212,149 @@ function SetupView({onSaved}: { onSaved: () => void }) {
 // ---- Jira kanban board ----
 const CAT_ORDER: Record<string, number> = {new: 0, indeterminate: 1, done: 2};
 
-function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectKey: string; onBack: () => void }) {
+interface JiraTransition { id: string; name: string; to_status: string; to_category: string }
+
+// ---- 이슈 상세 팝업 ----
+function IssueModal({issueKey, issues, onClose, onSelect}: {
+    issueKey: string; issues: JiraIssue[]; onClose: () => void; onSelect: (k: string) => void;
+}) {
+    const issue = issues.find(i => i.key === issueKey);
+    const [detail, setDetail] = useState<{description: string; transitions: JiraTransition[]; error: string} | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState('');
+
+    useEffect(() => {
+        setDetail(null);
+        setErr('');
+        JiraDetail(issueKey).then((d: any) => setDetail(d)).catch(() => {});
+    }, [issueKey, issue?.status]);
+
+    if (!issue) return null;
+    const kids = issues.filter(i => i.parent_key === issue.key)
+        .sort((a, b) => (CAT_ORDER[a.status_category] ?? 9) - (CAT_ORDER[b.status_category] ?? 9) || a.key.localeCompare(b.key));
+    const today = new Date().toISOString().slice(0, 10);
+    const late = issue.status_category !== 'done' && issue.due_date && issue.due_date < today;
+
+    const move = async (to: string) => {
+        if (to === issue.status || busy) return;
+        setBusy(true);
+        setErr('');
+        const r = await JiraMove(issue.key, to);
+        setBusy(false);
+        if (r) setErr(r);
+    };
+
+    // 전환 목록에서 중복 to_status 제거
+    const targets = (detail?.transitions ?? []).filter((t, idx, arr) =>
+        arr.findIndex(x => x.to_status === t.to_status) === idx);
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-head">
+                    <span className={`jira-status jira-${issue.status_category}`}>{issue.status}</span>
+                    <span className="jira-key">{issue.key}</span>
+                    <span className="hint">{issue.type} · {issue.project_name}</span>
+                    <button className="modal-x" onClick={onClose}>✕</button>
+                </div>
+                <h2 className="modal-title">{issue.summary}</h2>
+
+                {issue.parent_key && (
+                    <div className="modal-parent drill" onClick={() => onSelect(issue.parent_key)}>
+                        ↳ 상위: <b>{issue.parent_key}</b> {issue.parent_summary}
+                    </div>
+                )}
+
+                <div className="modal-meta">
+                    <div><span>담당자</span>{issue.assignee || '미지정'}</div>
+                    <div><span>우선순위</span>{issue.priority || '—'}</div>
+                    <div><span>마감일</span><i className={late ? 'jira-due' : ''}>{issue.due_date || '—'}</i></div>
+                    <div><span>생성</span>{timeAgo(issue.created)}</div>
+                    <div><span>업데이트</span>{timeAgo(issue.updated)}</div>
+                </div>
+
+                <div className="modal-section">
+                    <h4>상태 변경</h4>
+                    <div className="modal-trans">
+                        {detail === null && <span className="hint">불러오는 중…</span>}
+                        {targets.map(t => (
+                            <button key={t.id}
+                                    className={`pill pill-on pill-${t.to_category === 'done' ? 'push' : t.to_category === 'indeterminate' ? 'comment' : 'mr'} ${t.to_status === issue.status ? 'pill-cur' : ''}`}
+                                    disabled={busy || t.to_status === issue.status}
+                                    onClick={() => move(t.to_status)}>
+                                {t.to_status === issue.status ? '● ' : ''}{t.to_status}
+                            </button>
+                        ))}
+                        {busy && <span className="hint">변경 중…</span>}
+                    </div>
+                    {err && <div className="error-banner">⚠ {err}</div>}
+                </div>
+
+                {detail?.description && (
+                    <div className="modal-section">
+                        <h4>설명</h4>
+                        <pre className="modal-desc">{detail.description}</pre>
+                    </div>
+                )}
+
+                {kids.length > 0 && (
+                    <div className="modal-section">
+                        <h4>하위 이슈 <span className="count">{kids.filter(k => k.status_category === 'done').length}/{kids.length} 완료</span></h4>
+                        {kids.map(k => (
+                            <div key={k.key} className="jchild" onClick={() => onSelect(k.key)}>
+                                <span className={`jira-status jira-${k.status_category}`}>{k.status}</span>
+                                <span className="jghost-key">{k.key}</span>
+                                <span className="jghost-sum">{k.summary}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                <div className="modal-foot">
+                    <button className="btn btn-sm" onClick={() => OpenURL(issue.url)}>Jira에서 열기 ↗</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function JiraBoard({issues, projectKey, onBack, onSelect}: {
+    issues: JiraIssue[]; projectKey: string; onBack: () => void; onSelect: (k: string) => void;
+}) {
     const [moving, setMoving] = useState<string | null>(null);
     const [err, setErr] = useState('');
     const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
     const projIssues = useMemo(() => issues.filter(i => i.project_key === projectKey), [issues, projectKey]);
     const projectName = projIssues[0]?.project_name || projectKey;
 
-    // 컬럼 = 이 프로젝트 이슈들이 가진 상태 (카테고리 순 정렬)
-    const columns = useMemo(() => {
-        const seen = new Map<string, string>(); // status → category
-        for (const i of projIssues) seen.set(i.status, i.status_category);
-        return [...seen.entries()].sort((a, b) =>
-            (CAT_ORDER[a[1]] ?? 9) - (CAT_ORDER[b[1]] ?? 9) || a[0].localeCompare(b[0]));
-    }, [projIssues]);
-
-    // 부모 키 → 자식 이슈 목록 (컬럼 무관, 전체)
+    const keysInProject = useMemo(() => new Set(projIssues.map(i => i.key)), [projIssues]);
+    // 카드 = 최상위 이슈 + 부모가 캐시에 없는 하위 이슈 (고아)
+    const tops = useMemo(() =>
+        projIssues.filter(i => !i.parent_key || !keysInProject.has(i.parent_key)),
+    [projIssues, keysInProject]);
     const childrenByParent = useMemo(() => {
         const m = new Map<string, JiraIssue[]>();
         for (const i of projIssues) {
-            if (!i.parent_key) continue;
+            if (!i.parent_key || !keysInProject.has(i.parent_key)) continue;
             const arr = m.get(i.parent_key) ?? [];
             arr.push(i);
             m.set(i.parent_key, arr);
         }
+        // 자식은 상태 카테고리 → 키 순으로 정렬
+        for (const arr of m.values()) {
+            arr.sort((a, b) => (CAT_ORDER[a.status_category] ?? 9) - (CAT_ORDER[b.status_category] ?? 9) || a.key.localeCompare(b.key));
+        }
         return m;
-    }, [projIssues]);
+    }, [projIssues, keysInProject]);
 
-    // 하위 이슈를 가진 모든 부모 키 (전체 접기/펼치기용)
+    // 컬럼 = 카드(최상위) 이슈들이 가진 상태
+    const columns = useMemo(() => {
+        const seen = new Map<string, string>();
+        for (const i of tops) seen.set(i.status, i.status_category);
+        return [...seen.entries()].sort((a, b) =>
+            (CAT_ORDER[a[1]] ?? 9) - (CAT_ORDER[b[1]] ?? 9) || a[0].localeCompare(b[0]));
+    }, [tops]);
+
     const parentKeys = useMemo(() => [...childrenByParent.keys()], [childrenByParent]);
     const allCollapsed = parentKeys.length > 0 && parentKeys.every(k => collapsed.has(k));
 
@@ -265,11 +380,12 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
         }
     };
 
+    const today = new Date().toISOString().slice(0, 10);
     return (
         <div className="stats scroll">
             <div className="board-head">
                 <button className="btn btn-sm" onClick={onBack}>← 전체 현황</button>
-                <h2>{projectKey} <span className="hint">{projectName} · 카드를 드래그하면 상태가 변경됩니다</span></h2>
+                <h2>{projectKey} <span className="hint">{projectName} · 드래그: 상태 변경 · 클릭: 상세</span></h2>
                 {parentKeys.length > 0 && (
                     <button className="btn btn-sm" onClick={() =>
                         setCollapsed(allCollapsed ? new Set() : new Set(parentKeys))}>
@@ -280,56 +396,32 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
             {err && <div className="error-banner">⚠ {err}</div>}
             <div className="board">
                 {columns.map(([status, cat]) => {
-                    const inCol = projIssues.filter(i => i.status === status)
+                    const cards = tops.filter(i => i.status === status)
                         .sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);
-                    const tops = inCol.filter(i => !i.parent_key);
-                    const subsAll = inCol.filter(i => i.parent_key);
-                    const topKeys = new Set(tops.map(t => t.key));
-
-                    // 행 구성: 부모 + (펼침 상태면) 자식들, 그 뒤에 부모가 다른 컬럼인 하위 이슈
-                    type Row = { i: JiraIssue; kids: number; hidden: number };
-                    const rows: Row[] = [];
-                    for (const t of tops) {
-                        const kids = subsAll.filter(sb => sb.parent_key === t.key);
-                        const isCollapsed = collapsed.has(t.key);
-                        rows.push({i: t, kids: kids.length, hidden: isCollapsed ? kids.length : 0});
-                        if (!isCollapsed) kids.forEach(k => rows.push({i: k, kids: 0, hidden: 0}));
-                    }
-                    // 부모가 다른 컬럼에 있는 자식은 항상 표시 (접기는 같은 컬럼의 자식만 대상)
-                    const orphans = subsAll.filter(sb => !topKeys.has(sb.parent_key))
-                        .sort((a, b) => a.parent_key.localeCompare(b.parent_key));
-                    for (const o of orphans) {
-                        rows.push({i: o, kids: 0, hidden: 0});
-                    }
-
-                    const total = inCol.length;
-                    const shown = cat === 'done' ? rows.slice(0, 15) : rows;
-                    const today = new Date().toISOString().slice(0, 10);
+                    const shown = cat === 'done' ? cards.slice(0, 15) : cards;
                     return (
                         <div key={status} className={`col col-${cat}`}
                              onDragOver={e => e.preventDefault()}
                              onDrop={e => drop(e, status)}>
                             <div className="col-head">
                                 <span className={`jira-status jira-${cat}`}>{status}</span>
-                                <span className="count">{total}</span>
+                                <span className="count">{cards.length}</span>
                             </div>
                             <div className="col-cards">
-                                {shown.map(({i, kids}) => {
+                                {shown.map(i => {
                                     const late = i.status_category !== 'done' && i.due_date && i.due_date < today;
-                                    const parentVisible = i.parent_key && topKeys.has(i.parent_key);
-                                    const kidsAll = !i.parent_key ? (childrenByParent.get(i.key) ?? []) : [];
-                                    const kidsDone = kidsAll.filter(k => k.status_category === 'done').length;
-                                    const kidsElsewhere = kidsAll.filter(k => k.status !== status);
+                                    const kids = childrenByParent.get(i.key) ?? [];
+                                    const kidsDone = kids.filter(k => k.status_category === 'done').length;
                                     const isCollapsed = collapsed.has(i.key);
                                     return (
                                         <div key={i.key}
-                                             className={`jcard ${i.parent_key ? 'jcard-sub' : ''} ${moving === i.key ? 'jcard-moving' : ''}`}
+                                             className={`jcard ${moving === i.key ? 'jcard-moving' : ''}`}
                                              draggable
                                              onDragStart={e => e.dataTransfer.setData('text/plain', i.key)}
-                                             onDoubleClick={() => OpenURL(i.url)}
-                                             title={`${i.parent_key ? `상위: ${i.parent_key} ${i.parent_summary}\n` : ''}더블클릭: Jira에서 열기 / 드래그: 상태 변경`}>
+                                             onClick={() => onSelect(i.key)}
+                                             title="클릭: 상세 보기 / 드래그: 상태 변경">
                                             <div className="jcard-top">
-                                                {kidsAll.length > 0 && (
+                                                {kids.length > 0 && (
                                                     <button className="jfold"
                                                             onClick={e => { e.stopPropagation(); toggle(i.key); }}
                                                             title={isCollapsed ? '하위 이슈 펼치기' : '하위 이슈 접기'}>
@@ -337,9 +429,9 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                                     </button>
                                                 )}
                                                 <span className="jira-key">{i.key}</span>
-                                                {kidsAll.length > 0 &&
-                                                    <span className="jkids" title={`하위 이슈 ${kidsAll.length}개 중 ${kidsDone}개 완료`}>하위 {kidsDone}/{kidsAll.length}</span>}
-                                                {i.parent_key && !parentVisible &&
+                                                {kids.length > 0 &&
+                                                    <span className="jkids" title={`하위 이슈 ${kids.length}개 중 ${kidsDone}개 완료`}>하위 {kidsDone}/{kids.length}</span>}
+                                                {i.parent_key &&
                                                     <span className="jparent" title={i.parent_summary}>↳ {i.parent_key}</span>}
                                                 {i.priority && <span className={`jprio jprio-${i.priority.toLowerCase()}`}>{i.priority}</span>}
                                             </div>
@@ -348,12 +440,12 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                                 <span>{i.assignee || '미지정'}</span>
                                                 {i.due_date && <span className={late ? 'jira-due' : ''}>~{i.due_date}</span>}
                                             </div>
-                                            {!isCollapsed && kidsElsewhere.length > 0 && (
+                                            {!isCollapsed && kids.length > 0 && (
                                                 <div className="jghosts">
-                                                    {kidsElsewhere.map(k => (
-                                                        <div key={k.key} className="jghost"
-                                                             onDoubleClick={e => { e.stopPropagation(); OpenURL(k.url); }}
-                                                             title={`${k.summary} — 현재 '${k.status}' 컬럼에 있음 / 더블클릭: Jira에서 열기`}>
+                                                    {kids.map(k => (
+                                                        <div key={k.key} className="jchild"
+                                                             onClick={e => { e.stopPropagation(); onSelect(k.key); }}
+                                                             title={`${k.summary} — 클릭: 상세 보기`}>
                                                             <span className={`jira-status jira-${k.status_category}`}>{k.status}</span>
                                                             <span className="jghost-key">{k.key}</span>
                                                             <span className="jghost-sum">{k.summary}</span>
@@ -364,8 +456,8 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                         </div>
                                     );
                                 })}
-                                {cat === 'done' && rows.length > 15 &&
-                                    <div className="empty" style={{padding: '8px'}}>+{rows.length - 15}건 더 (최근 15건만 표시)</div>}
+                                {cat === 'done' && cards.length > 15 &&
+                                    <div className="empty" style={{padding: '8px'}}>+{cards.length - 15}건 더 (최근 15건만 표시)</div>}
                             </div>
                         </div>
                     );
@@ -378,7 +470,10 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
 // ---- Jira view ----
 function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
     const [board, setBoard] = useState<string | null>(null);
+    const [selected, setSelected] = useState<string | null>(null);
     const issues = snap.jira_issues;
+    const modal = selected &&
+        <IssueModal issueKey={selected} issues={issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;
     const today = new Date().toISOString().slice(0, 10);
     const cut = periodCutoff(period);
 
@@ -425,7 +520,10 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
         );
     }
 
-    if (board) return <JiraBoard issues={issues} projectKey={board} onBack={() => setBoard(null)}/>;
+    if (board) return <>
+        <JiraBoard issues={issues} projectKey={board} onBack={() => setBoard(null)} onSelect={setSelected}/>
+        {modal}
+    </>;
 
     const allProjects = [...new Map(issues.map(i => [i.project_key, i.project_name])).entries()]
         .sort((a, b) => a[0].localeCompare(b[0]));
@@ -454,7 +552,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                 <section className="stat-block">
                     <h3>기한 초과 <span className="count">{overdue.length}</span></h3>
                     {overdue.map(i => (
-                        <div key={i.key} className="pipe" onClick={() => OpenURL(i.url)}>
+                        <div key={i.key} className="pipe" onClick={() => setSelected(i.key)}>
                             <span className="jira-key">{i.key}</span>
                             <span className="pipe-proj">{i.summary}</span>
                             <span className="jira-assignee">{i.assignee || '미지정'}</span>
@@ -495,7 +593,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
             <section className="stat-block">
                 <h3>최근 업데이트 <span className="count">{recent.length}</span></h3>
                 {recent.map(i => (
-                    <div key={i.key} className="pipe" onClick={() => OpenURL(i.url)}>
+                    <div key={i.key} className="pipe" onClick={() => setSelected(i.key)}>
                         <span className={`jira-status jira-${i.status_category}`}>{i.status}</span>
                         <span className="jira-key">{i.key}</span>
                         <span className="pipe-proj">{i.summary}</span>
@@ -504,6 +602,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                     </div>
                 ))}
             </section>
+            {modal}
         </div>
     );
 }

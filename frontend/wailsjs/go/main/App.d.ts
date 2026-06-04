@@ -6,6 +6,8 @@ export function GetConfig():Promise<Record<string, any>>;
 
 export function GetSnapshot():Promise<main.Snapshot>;
 
+export function JiraDetail(arg1:string):Promise<main.JiraIssueDetail>;
+
 export function JiraMove(arg1:string,arg2:string):Promise<string>;
 
 export function OpenURL(arg1:string):Promise<void>;

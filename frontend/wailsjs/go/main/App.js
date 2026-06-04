@@ -10,6 +10,10 @@ export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
 }
 
+export function JiraDetail(arg1) {
+  return window['go']['main']['App']['JiraDetail'](arg1);
+}
+
 export function JiraMove(arg1, arg2) {
   return window['go']['main']['App']['JiraMove'](arg1, arg2);
 }
