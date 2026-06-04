@@ -131,7 +131,18 @@ type MergeRequest struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 	MergedAt     *time.Time `json:"merged_at"`
 	// Enriched locally
-	ProjectPath string `json:"project_path"`
+	ProjectPath   string     `json:"project_path"`
+	FirstReviewAt *time.Time `json:"first_review_at"` // 작성자 외 첫 댓글/승인 시각
+	FirstReviewer string     `json:"first_reviewer"`
+	Approvers     []string   `json:"approvers"` // 현재 승인자 username 목록
+}
+
+type Note struct {
+	ID        int       `json:"id"`
+	Body      string    `json:"body"`
+	System    bool      `json:"system"`
+	Author    Author    `json:"author"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Pipeline struct {
@@ -267,6 +278,48 @@ func (c *Client) GetProjectPipelines(projectID int, updatedAfter string, maxPage
 		}
 	}
 	return all, nil
+}
+
+// GetMRNotes returns an MR's notes oldest-first, up to maxPages*100.
+func (c *Client) GetMRNotes(projectID, iid, maxPages int) ([]Note, error) {
+	var all []Note
+	base := "/projects/" + strconv.Itoa(projectID) + "/merge_requests/" + strconv.Itoa(iid) + "/notes"
+	for page := 1; page <= maxPages; page++ {
+		q := url.Values{}
+		q.Set("per_page", "100")
+		q.Set("page", strconv.Itoa(page))
+		q.Set("order_by", "created_at")
+		q.Set("sort", "asc")
+		var batch []Note
+		h, err := c.get(base, q, &batch)
+		if err != nil {
+			return all, err
+		}
+		all = append(all, batch...)
+		next := h.Get("x-next-page")
+		if next == "" || next == "0" || len(batch) == 0 {
+			break
+		}
+	}
+	return all, nil
+}
+
+// GetMRApprovals returns usernames that currently approve the MR.
+func (c *Client) GetMRApprovals(projectID, iid int) ([]Author, error) {
+	var resp struct {
+		ApprovedBy []struct {
+			User Author `json:"user"`
+		} `json:"approved_by"`
+	}
+	_, err := c.get("/projects/"+strconv.Itoa(projectID)+"/merge_requests/"+strconv.Itoa(iid)+"/approvals", nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+	users := make([]Author, 0, len(resp.ApprovedBy))
+	for _, a := range resp.ApprovedBy {
+		users = append(users, a.User)
+	}
+	return users, nil
 }
 
 // GetMergedMergeRequests returns MRs merged/updated after the given time.

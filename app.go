@@ -83,6 +83,7 @@ type App struct {
 	snap      Snapshot
 	cache     map[int]*projEvents    // projectID → cached events
 	pipeCache map[int]*projPipelines // projectID → cached pipelines
+	mrCache   map[int]*mrReview      // MR ID → cached review facts
 	cycle     int                    // poll cycle counter
 	lastSig   uint64                 // signature of the last published snapshot
 	// slow-changing metadata, refreshed every slowEvery cycles
@@ -100,6 +101,7 @@ func NewApp() *App {
 	return &App{
 		cache:         map[int]*projEvents{},
 		pipeCache:     map[int]*projPipelines{},
+		mrCache:       map[int]*mrReview{},
 		notifiedPipes: map[int]bool{},
 		knownMRs:      map[int]bool{},
 	}
@@ -111,6 +113,7 @@ func (a *App) startup(ctx context.Context) {
 	a.cfg = config.Load()
 	a.rebuildClient()
 	a.loadCache()
+	a.loadMRCache()
 	go a.pollLoop(ctx)
 }
 
@@ -284,6 +287,9 @@ func (a *App) refresh() {
 	// 나머지 CI 프로젝트 전체 스윕은 slowEvery 사이클마다.
 	pipelines, pipeFails := a.collectPipelines(client, res.projects, since, slow)
 
+	// MR 리뷰 지표: updated_at이 변한 MR만 notes/approvals 재조회
+	a.collectMRReviews(client, res.openMRs, res.merged)
+
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := make(map[int]gitlab.Project, len(res.projects))
 	for _, p := range res.projects {
@@ -376,6 +382,7 @@ func (a *App) refresh() {
 	}
 	if a.publish(snap) {
 		a.saveCache() // 변경이 있을 때만 디스크에 기록
+		a.saveMRCache()
 	}
 }
 
@@ -680,7 +687,7 @@ func snapshotSig(s *Snapshot) uint64 {
 		w(s.Events[0].ID)
 	}
 	for _, m := range s.OpenMRs {
-		w(m.ID, m.UpdatedAt.UnixNano())
+		w(m.ID, m.UpdatedAt.UnixNano(), len(m.Approvers), m.FirstReviewAt != nil)
 	}
 	w(len(s.MergedMRs), len(s.Pipelines))
 	for _, p := range s.Pipelines {

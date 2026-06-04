@@ -109,6 +109,10 @@ export namespace gitlab {
 	    // Go type: time
 	    merged_at?: any;
 	    project_path: string;
+	    // Go type: time
+	    first_review_at?: any;
+	    first_reviewer: string;
+	    approvers: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new MergeRequest(source);
@@ -130,6 +134,9 @@ export namespace gitlab {
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	        this.merged_at = this.convertValues(source["merged_at"], null);
 	        this.project_path = source["project_path"];
+	        this.first_review_at = this.convertValues(source["first_review_at"], null);
+	        this.first_reviewer = source["first_reviewer"];
+	        this.approvers = source["approvers"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

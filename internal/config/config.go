@@ -118,6 +118,15 @@ func PipelineCachePath() (string, error) {
 	return filepath.Join(dir, "gitlab-mon", "pipelines-cache.json"), nil
 }
 
+// MRReviewCachePath returns the MR review cache file location.
+func MRReviewCachePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "gitlab-mon", "mr-reviews-cache.json"), nil
+}
+
 func applyEnvFile(path string, cfg *Config) {
 	f, err := os.Open(path)
 	if err != nil {

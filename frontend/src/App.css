@@ -336,6 +336,10 @@ html, body, #root {
     background: linear-gradient(90deg, rgba(35, 134, 54, 0.85), rgba(74, 222, 128, 0.95));
     box-shadow: 0 0 12px rgba(74, 222, 128, 0.4);
 }
+.lb-bar-review {
+    background: linear-gradient(90deg, rgba(147, 51, 234, 0.85), rgba(192, 132, 252, 0.95));
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.4);
+}
 .lb-score { width: 44px; text-align: right; font-weight: 700; font-size: 12px; flex-shrink: 0; }
 .lb-detail { color: var(--muted); font-size: 11px; width: 260px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

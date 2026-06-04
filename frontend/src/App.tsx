@@ -16,6 +16,7 @@ interface MR {
     id: number; iid: number; project_id: number; title: string; draft: boolean;
     author: Author; source_branch: string; target_branch: string; web_url: string;
     created_at: string; updated_at: string; merged_at: string | null; project_path: string;
+    first_review_at: string | null; first_reviewer: string; approvers: string[] | null;
 }
 interface Stats {
     forks: string; issues: string; merge_requests: string; users: string;
@@ -435,6 +436,35 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
     const avgOpenAge = openAges.length ? openAges.reduce((a, b) => a + b, 0) / openAges.length : 0;
     const mrOpened = events.filter(e => eventKind(e) === 'mr' && e.action_name === 'opened').length;
 
+    // 리뷰 지표
+    const reviewTimes = mergedMRs
+        .filter(m => m.first_review_at)
+        .map(m => new Date(m.first_review_at!).getTime() - new Date(m.created_at).getTime())
+        .filter(t => t > 0);
+    const avgFirstReview = reviewTimes.length ? reviewTimes.reduce((a, b) => a + b, 0) / reviewTimes.length : 0;
+    const mergedNoReview = mergedMRs.filter(m => !m.first_review_at && !(m.approvers?.length)).length;
+    const reviewers = useMemo(() => {
+        // 승인 수: 기간 내 머지 MR + 현재 열린 MR의 approvers 집계
+        const appr = new Map<string, number>();
+        for (const m of [...mergedMRs, ...snap.open_mrs]) {
+            for (const u of m.approvers ?? []) appr.set(u, (appr.get(u) ?? 0) + 1);
+        }
+        // MR 댓글 수: 이벤트에서 (작성자 무관 MR 대상 댓글)
+        const cmt = new Map<string, number>();
+        for (const e of events) {
+            if (eventKind(e) === 'comment' && e.target_type?.includes('MergeRequest')) {
+                const u = e.author?.username || '?';
+                cmt.set(u, (cmt.get(u) ?? 0) + 1);
+            }
+        }
+        const names = new Set([...appr.keys(), ...cmt.keys()]);
+        return [...names]
+            .map(u => ({user: u, approvals: appr.get(u) ?? 0, comments: cmt.get(u) ?? 0}))
+            .sort((a, b) => (b.approvals * 2 + b.comments) - (a.approvals * 2 + a.comments))
+            .slice(0, 10);
+    }, [mergedMRs, snap.open_mrs, events]);
+    const reviewerMax = Math.max(1, ...reviewers.map(r => r.approvals * 2 + r.comments));
+
     const top = users.slice(0, 10);
     const scoreMax = Math.max(1, ...top.map(u => u.score));
     const heatMax = Math.max(1, ...top.flatMap(u => [...u.byDay.values()]));
@@ -450,6 +480,13 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 <div className="card"><div className="card-v">{snap.open_mrs.length}</div><div className="card-l">열린 MR</div></div>
                 <div className="card"><div className="card-v">{openAges.length ? fmtDur(avgOpenAge) : '—'}</div><div className="card-l">열린 MR 평균 나이</div></div>
                 <div className="card"><div className="card-v">{events.length}</div><div className="card-l">전체 이벤트 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{reviewTimes.length ? fmtDur(avgFirstReview) : '—'}</div><div className="card-l">평균 첫 리뷰 시간</div></div>
+                <div className="card">
+                    <div className="card-v" style={{WebkitTextFillColor: mergedMRs.length > 0 && mergedNoReview / mergedMRs.length > 0.5 ? 'var(--orange)' : undefined}}>
+                        {mergedMRs.length ? `${mergedNoReview}/${mergedMRs.length}` : '—'}
+                    </div>
+                    <div className="card-l">리뷰 없는 머지</div>
+                </div>
             </div>
 
             {/* 사용자 리더보드 */}
@@ -560,6 +597,22 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                     </div>
                 </section>
             </div>
+
+            {/* 리뷰어 리더보드 */}
+            <section className="stat-block">
+                <h3>리뷰어 활동 Top 10 <span className="hint">승인 ×2 + MR 댓글 기준 · 승인은 현재 시점 집계</span></h3>
+                {reviewers.map(r => (
+                    <div key={r.user} className="lb-row">
+                        <span className="lb-name drill" title={`${r.user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(r.user)}>{r.user}</span>
+                        <div className="lb-bar-wrap">
+                            <div className="lb-bar lb-bar-review" style={{width: `${((r.approvals * 2 + r.comments) / reviewerMax) * 100}%`}}/>
+                        </div>
+                        <span className="lb-score">{r.approvals * 2 + r.comments}</span>
+                        <span className="lb-detail">승인 {r.approvals} · MR 댓글 {r.comments}</span>
+                    </div>
+                ))}
+                {reviewers.length === 0 && <div className="empty">기간 내 리뷰 활동 없음</div>}
+            </section>
 
             {/* 레포별 활동 */}
             <section className="stat-block">
