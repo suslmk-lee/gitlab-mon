@@ -1,0 +1,488 @@
+import {useEffect, useMemo, useState} from 'react';
+import './App.css';
+import {GetSnapshot, Refresh, SaveConfig, OpenURL} from "../wailsjs/go/main/App";
+import {EventsOn} from "../wailsjs/runtime/runtime";
+
+// ---- Types mirroring the Go Snapshot ----
+interface Author { id: number; username: string; name: string; avatar_url: string; is_bot: boolean }
+interface PushData { commit_count: number; action: string; ref_type: string; ref: string; commit_title: string }
+interface GLEvent {
+    id: number; project_id: number; action_name: string; target_type: string;
+    target_title: string; target_iid: number; author: Author; push_data: PushData | null;
+    created_at: string; project_path: string; project_url: string;
+}
+interface Project { id: number; path_with_namespace: string; name: string; web_url: string; last_activity_at: string }
+interface MR {
+    id: number; iid: number; project_id: number; title: string; draft: boolean;
+    author: Author; source_branch: string; target_branch: string; web_url: string;
+    created_at: string; updated_at: string; merged_at: string | null; project_path: string;
+}
+interface Stats {
+    forks: string; issues: string; merge_requests: string; users: string;
+    projects: string; groups: string; active_users: string;
+}
+interface Snapshot {
+    fetched_at: string; gitlab_url: string;
+    version: { version: string } | null; stats: Stats | null;
+    events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
+    error: string; needs_config: boolean;
+}
+
+// ---- Helpers ----
+function timeAgo(iso: string): string {
+    const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return '방금 전';
+    if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+    if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
+    return `${Math.floor(s / 86400)}일 전`;
+}
+
+function dayKey(iso: string): string {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function lastNDays(n: number): string[] {
+    const out: string[] = [];
+    const now = new Date();
+    for (let i = n - 1; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+        out.push(dayKey(d.toISOString()));
+    }
+    return out;
+}
+
+type Kind = 'push' | 'merge' | 'mr' | 'comment' | 'other';
+
+function eventKind(e: GLEvent): Kind {
+    const a = e.action_name;
+    if (a.startsWith('pushed')) return 'push';
+    if (a === 'accepted') return 'merge';
+    if (e.target_type === 'MergeRequest') return 'mr';
+    if (a.startsWith('commented')) return 'comment';
+    return 'other';
+}
+
+const KIND_META: Record<Kind, { label: string; icon: string; color: string }> = {
+    push:    {label: 'Push',  icon: '⬆', color: 'var(--green)'},
+    merge:   {label: 'Merge', icon: '⛙', color: 'var(--purple)'},
+    mr:      {label: 'MR',    icon: '⎇', color: 'var(--accent)'},
+    comment: {label: '댓글',   icon: '💬', color: 'var(--orange)'},
+    other:   {label: '기타',   icon: '•', color: 'var(--muted)'},
+};
+const KINDS = Object.keys(KIND_META) as Kind[];
+
+function describeEvent(e: GLEvent): string {
+    const k = eventKind(e);
+    if (k === 'push' && e.push_data) {
+        const n = e.push_data.commit_count;
+        if (e.push_data.action === 'created') return `브랜치 생성 ${e.push_data.ref}`;
+        if (e.push_data.action === 'removed') return `브랜치 삭제 ${e.push_data.ref}`;
+        return `${e.push_data.ref} 에 ${n}개 커밋 push${e.push_data.commit_title ? ` — ${e.push_data.commit_title}` : ''}`;
+    }
+    if (k === 'merge') return `MR !${e.target_iid} 머지: ${e.target_title}`;
+    if (k === 'mr') return `MR !${e.target_iid} ${e.action_name === 'opened' ? '생성' : e.action_name}: ${e.target_title}`;
+    if (k === 'comment') return `댓글: ${e.target_title || ''}`;
+    return `${e.action_name} ${e.target_type || ''} ${e.target_title || ''}`.trim();
+}
+
+// 활동 지수 가중치: 커밋 1, MR 생성 4, 머지 6, 댓글 1, 기타 0.5
+function eventScore(e: GLEvent): number {
+    const k = eventKind(e);
+    if (k === 'push') return Math.max(1, Math.min(e.push_data?.commit_count ?? 1, 20));
+    if (k === 'mr') return e.action_name === 'opened' ? 4 : 2;
+    if (k === 'merge') return 6;
+    if (k === 'comment') return 1;
+    return 0.5;
+}
+
+function authorLabel(a: Author | undefined): string {
+    if (!a) return '?';
+    return (a.is_bot ? '🤖 ' : '') + (a.name || a.username);
+}
+
+// ---- Per-user aggregation ----
+interface UserStat {
+    username: string; name: string; isBot: boolean;
+    score: number; commits: number; pushes: number; mrs: number; merges: number; comments: number;
+    byDay: Map<string, number>; // day → score
+}
+
+function aggregateUsers(events: GLEvent[]): UserStat[] {
+    const map = new Map<string, UserStat>();
+    for (const e of events) {
+        const u = e.author?.username || '?';
+        let s = map.get(u);
+        if (!s) {
+            s = {username: u, name: authorLabel(e.author), isBot: !!e.author?.is_bot, score: 0, commits: 0, pushes: 0, mrs: 0, merges: 0, comments: 0, byDay: new Map()};
+            map.set(u, s);
+        }
+        const k = eventKind(e);
+        const sc = eventScore(e);
+        s.score += sc;
+        s.byDay.set(dayKey(e.created_at), (s.byDay.get(dayKey(e.created_at)) ?? 0) + sc);
+        if (k === 'push') { s.pushes++; s.commits += e.push_data?.commit_count ?? 0; }
+        else if (k === 'mr' && e.action_name === 'opened') s.mrs++;
+        else if (k === 'merge') s.merges++;
+        else if (k === 'comment') s.comments++;
+    }
+    return [...map.values()].sort((a, b) => b.score - a.score);
+}
+
+// ---- Small components ----
+function StatChip({label, value}: { label: string; value: string }) {
+    return <div className="chip"><span className="chip-value">{value}</span><span className="chip-label">{label}</span></div>;
+}
+
+function SetupView({onSaved}: { onSaved: () => void }) {
+    const [url, setUrl] = useState('https://ci.quantumcns.ai');
+    const [token, setToken] = useState('');
+    const [err, setErr] = useState('');
+    const save = async () => {
+        const e = await SaveConfig(url, token);
+        if (e) setErr(e); else onSaved();
+    };
+    return (
+        <div className="setup">
+            <h2>GitLab 연결 설정</h2>
+            <p>admin 계정의 Personal Access Token(<code>read_api</code>)이 필요합니다.</p>
+            <label>GitLab URL</label>
+            <input value={url} onChange={e => setUrl(e.target.value)}/>
+            <label>Access Token</label>
+            <input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="glpat-..."/>
+            {err && <div className="error-banner">{err}</div>}
+            <button className="btn" onClick={save} disabled={!token}>저장 후 연결</button>
+        </div>
+    );
+}
+
+// ---- Stats view ----
+function StatsView({snap}: { snap: Snapshot }) {
+    const [includeBots, setIncludeBots] = useState(false);
+    const days = useMemo(() => lastNDays(30), [snap.fetched_at]);
+    const users = useMemo(() => {
+        const all = aggregateUsers(snap.events);
+        return includeBots ? all : all.filter(u => !u.isBot);
+    }, [snap.events, includeBots]);
+
+    // 날짜별 kind 스택
+    const daily = useMemo(() => {
+        const m = new Map<string, Record<Kind, number>>();
+        for (const d of days) m.set(d, {push: 0, merge: 0, mr: 0, comment: 0, other: 0});
+        for (const e of snap.events) {
+            const row = m.get(dayKey(e.created_at));
+            if (row) row[eventKind(e)]++;
+        }
+        return m;
+    }, [snap.events, days]);
+    const dailyMax = Math.max(1, ...[...daily.values()].map(r => KINDS.reduce((s, k) => s + r[k], 0)));
+
+    // 레포별 활동
+    const repos = useMemo(() => {
+        const m = new Map<string, number>();
+        for (const e of snap.events) {
+            const p = e.project_path || `#${e.project_id}`;
+            m.set(p, (m.get(p) ?? 0) + 1);
+        }
+        return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    }, [snap.events]);
+    const repoMax = Math.max(1, ...repos.map(r => r[1]));
+
+    // 시간대별
+    const hours = useMemo(() => {
+        const h = new Array(24).fill(0);
+        for (const e of snap.events) h[new Date(e.created_at).getHours()]++;
+        return h;
+    }, [snap.events]);
+    const hourMax = Math.max(1, ...hours);
+
+    // MR 지표
+    const leadTimes = snap.merged_mrs
+        .filter(m => m.merged_at)
+        .map(m => new Date(m.merged_at!).getTime() - new Date(m.created_at).getTime());
+    const avgLead = leadTimes.length ? leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length : 0;
+    const fmtDur = (ms: number) => {
+        const h = ms / 3600_000;
+        if (h < 1) return `${Math.round(ms / 60_000)}분`;
+        if (h < 48) return `${h.toFixed(1)}시간`;
+        return `${(h / 24).toFixed(1)}일`;
+    };
+    const openAges = snap.open_mrs.map(m => Date.now() - new Date(m.created_at).getTime());
+    const avgOpenAge = openAges.length ? openAges.reduce((a, b) => a + b, 0) / openAges.length : 0;
+    const mrOpened30d = snap.events.filter(e => eventKind(e) === 'mr' && e.action_name === 'opened').length;
+
+    const top = users.slice(0, 10);
+    const scoreMax = Math.max(1, ...top.map(u => u.score));
+    const heatMax = Math.max(1, ...top.flatMap(u => [...u.byDay.values()]));
+    const level = (v: number) => v <= 0 ? 0 : Math.min(4, 1 + Math.floor((v / heatMax) * 3.999));
+
+    return (
+        <div className="stats scroll">
+            {/* MR 지표 카드 */}
+            <div className="cards">
+                <div className="card"><div className="card-v">{mrOpened30d}</div><div className="card-l">MR 생성 (30일)</div></div>
+                <div className="card"><div className="card-v">{snap.merged_mrs.length}</div><div className="card-l">머지 완료 (30일)</div></div>
+                <div className="card"><div className="card-v">{leadTimes.length ? fmtDur(avgLead) : '—'}</div><div className="card-l">평균 머지 리드타임</div></div>
+                <div className="card"><div className="card-v">{snap.open_mrs.length}</div><div className="card-l">열린 MR</div></div>
+                <div className="card"><div className="card-v">{openAges.length ? fmtDur(avgOpenAge) : '—'}</div><div className="card-l">열린 MR 평균 나이</div></div>
+                <div className="card"><div className="card-v">{snap.events.length}</div><div className="card-l">전체 이벤트 (30일)</div></div>
+            </div>
+
+            {/* 사용자 리더보드 */}
+            <section className="stat-block">
+                <h3>
+                    사용자별 활동 지수 <span className="hint">커밋 1 · MR 4 · 머지 6 · 댓글 1</span>
+                    <label className="toggle">
+                        <input type="checkbox" checked={includeBots} onChange={e => setIncludeBots(e.target.checked)}/>
+                        토큰봇 포함
+                    </label>
+                </h3>
+                {top.map((u, i) => (
+                    <div key={u.username} className="lb-row">
+                        <span className="lb-rank">{i + 1}</span>
+                        <span className="lb-name" title={u.username}>{u.name}</span>
+                        <div className="lb-bar-wrap">
+                            <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
+                        </div>
+                        <span className="lb-score">{Math.round(u.score)}</span>
+                        <span className="lb-detail">커밋 {u.commits} · push {u.pushes} · MR {u.mrs} · 머지 {u.merges} · 댓글 {u.comments}</span>
+                    </div>
+                ))}
+                {top.length === 0 && <div className="empty">데이터 없음</div>}
+            </section>
+
+            {/* 사용자 × 날짜 히트맵 */}
+            <section className="stat-block">
+                <h3>사용자 × 날짜 활동 히트맵 <span className="hint">최근 30일, 진할수록 활동 많음</span></h3>
+                <div className="heat">
+                    {top.map(u => (
+                        <div key={u.username} className="heat-row">
+                            <span className="heat-name">{u.name}</span>
+                            {days.map(d => {
+                                const v = u.byDay.get(d) ?? 0;
+                                return <span key={d} className={`cell cell-${level(v)}`} title={`${u.name} · ${d} · ${Math.round(v)}점`}/>;
+                            })}
+                        </div>
+                    ))}
+                    <div className="heat-row heat-axis">
+                        <span className="heat-name"/>
+                        {days.map((d, i) => (
+                            <span key={d} className="cell axis">{i % 5 === 0 ? d.slice(8) : ''}</span>
+                        ))}
+                    </div>
+                </div>
+            </section>
+
+            <div className="stat-cols">
+                {/* 날짜별 액션 스택 */}
+                <section className="stat-block">
+                    <h3>날짜별 활동 (액션 종류)</h3>
+                    <div className="bars">
+                        {days.map(d => {
+                            const row = daily.get(d)!;
+                            const total = KINDS.reduce((s, k) => s + row[k], 0);
+                            return (
+                                <div key={d} className="bar-col" title={`${d} · 총 ${total}\n` + KINDS.map(k => `${KIND_META[k].label} ${row[k]}`).join(', ')}>
+                                    <div className="bar-stack">
+                                        {KINDS.map(k => row[k] > 0 && (
+                                            <div key={k} style={{height: `${(row[k] / dailyMax) * 100}%`, background: KIND_META[k].color}}/>
+                                        ))}
+                                    </div>
+                                    <span className="bar-x">{d.slice(8)}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="legend">
+                        {KINDS.map(k => <span key={k}><i style={{background: KIND_META[k].color}}/>{KIND_META[k].label}</span>)}
+                    </div>
+                </section>
+
+                {/* 시간대별 분포 */}
+                <section className="stat-block">
+                    <h3>시간대별 활동 분포</h3>
+                    <div className="bars">
+                        {hours.map((v, h) => (
+                            <div key={h} className="bar-col" title={`${h}시 · ${v}건`}>
+                                <div className="bar-stack">
+                                    <div style={{height: `${(v / hourMax) * 100}%`, background: 'var(--accent)'}}/>
+                                </div>
+                                <span className="bar-x">{h % 3 === 0 ? h : ''}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            </div>
+
+            {/* 레포별 활동 */}
+            <section className="stat-block">
+                <h3>레포별 활동 Top 10 <span className="hint">이벤트 수 기준</span></h3>
+                {repos.map(([path, n]) => (
+                    <div key={path} className="lb-row">
+                        <span className="lb-name lb-name-wide">{path}</span>
+                        <div className="lb-bar-wrap">
+                            <div className="lb-bar lb-bar-repo" style={{width: `${(n / repoMax) * 100}%`}}/>
+                        </div>
+                        <span className="lb-score">{n}</span>
+                    </div>
+                ))}
+            </section>
+        </div>
+    );
+}
+
+// ---- Main app ----
+const FEED_LIMIT = 300;
+
+function App() {
+    const [snap, setSnap] = useState<Snapshot | null>(null);
+    const [tab, setTab] = useState<'feed' | 'stats'>('feed');
+    const [filter, setFilter] = useState('');
+    const [kinds, setKinds] = useState<Set<Kind>>(new Set());
+    const [, setTick] = useState(0);
+
+    // Go nil-slice → JSON null 방어 + 초기 zero-value 스냅샷 무시
+    const normalize = (s: any): Snapshot => ({
+        ...s,
+        events: s.events ?? [],
+        projects: s.projects ?? [],
+        open_mrs: s.open_mrs ?? [],
+        merged_mrs: s.merged_mrs ?? [],
+    });
+    const isReady = (s: any) =>
+        s && s.fetched_at && !String(s.fetched_at).startsWith('0001');
+
+    useEffect(() => {
+        GetSnapshot().then(s => { if (isReady(s)) setSnap(normalize(s)); }).catch(() => {});
+        const off = EventsOn('snapshot', (s: any) => { if (isReady(s)) setSnap(normalize(s)); });
+        const t = setInterval(() => setTick(n => n + 1), 30_000); // re-render for relative times
+        return () => { off(); clearInterval(t); };
+    }, []);
+
+    const events = useMemo(() => {
+        if (!snap) return [];
+        const q = filter.trim().toLowerCase();
+        return snap.events.filter(e => {
+            if (kinds.size > 0 && !kinds.has(eventKind(e))) return false;
+            if (!q) return true;
+            return (e.author?.username || '').toLowerCase().includes(q)
+                || (e.author?.name || '').toLowerCase().includes(q)
+                || (e.project_path || '').toLowerCase().includes(q)
+                || (e.target_title || '').toLowerCase().includes(q)
+                || (e.push_data?.ref || '').toLowerCase().includes(q);
+        }).slice(0, FEED_LIMIT);
+    }, [snap, filter, kinds]);
+
+    const toggleKind = (k: Kind) => setKinds(prev => {
+        const next = new Set(prev);
+        next.has(k) ? next.delete(k) : next.add(k);
+        return next;
+    });
+
+    if (!snap) return <div className="loading">GitLab 데이터 불러오는 중…</div>;
+    if (snap.needs_config) return <SetupView onSaved={() => setSnap(null)}/>;
+
+    return (
+        <div className="app">
+            <header className="topbar">
+                <div className="brand">
+                    <span className={`dot ${snap.error ? 'dot-red' : 'dot-green'}`} title={snap.error || '정상'}/>
+                    <h1>GitLab Monitor</h1>
+                    <a className="instance" onClick={() => OpenURL(snap.gitlab_url)}>
+                        {snap.gitlab_url.replace(/^https?:\/\//, '')}
+                    </a>
+                    {snap.version && <span className="version">v{snap.version.version}</span>}
+                    <nav className="tabs">
+                        <button className={tab === 'feed' ? 'tab tab-on' : 'tab'} onClick={() => setTab('feed')}>활동 피드</button>
+                        <button className={tab === 'stats' ? 'tab tab-on' : 'tab'} onClick={() => setTab('stats')}>통계</button>
+                    </nav>
+                </div>
+                <div className="chips">
+                    {snap.stats && <>
+                        <StatChip label="프로젝트" value={snap.stats.projects}/>
+                        <StatChip label="그룹" value={snap.stats.groups}/>
+                        <StatChip label="사용자(활성)" value={`${snap.stats.users} (${snap.stats.active_users})`}/>
+                        <StatChip label="열린 MR" value={String(snap.open_mrs.length)}/>
+                    </>}
+                    <button className="btn btn-sm" onClick={() => Refresh()}>↻ 새로고침</button>
+                    <span className="fetched">{timeAgo(snap.fetched_at)} 갱신</span>
+                </div>
+            </header>
+
+            {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
+
+            {tab === 'stats' ? <StatsView snap={snap}/> : (
+            <main className="grid">
+                <section className="panel feed">
+                    <div className="panel-head">
+                        <h2>활동 피드 <span className="count">{events.length}{events.length === FEED_LIMIT ? '+' : ''} / 30일</span></h2>
+                        <div className="filters">
+                            {KINDS.map(k => (
+                                <button key={k}
+                                        className={`pill ${kinds.has(k) ? 'pill-on' : ''} pill-${k}`}
+                                        onClick={() => toggleKind(k)}>
+                                    {KIND_META[k].icon} {KIND_META[k].label}
+                                </button>
+                            ))}
+                            <input className="search" placeholder="사용자 / 레포 / 브랜치 검색"
+                                   value={filter} onChange={e => setFilter(e.target.value)}/>
+                        </div>
+                    </div>
+                    <div className="scroll">
+                        {events.map(e => {
+                            const k = eventKind(e);
+                            return (
+                                <div key={e.id} className={`event event-${k}`}>
+                                    <span className={`badge badge-${k}`}>{KIND_META[k].icon}</span>
+                                    <div className="event-body">
+                                        <div className="event-top">
+                                            <b>{authorLabel(e.author)}</b>
+                                            <a className="proj" onClick={() => e.project_url && OpenURL(e.project_url)}>
+                                                {e.project_path || `project #${e.project_id}`}
+                                            </a>
+                                            <span className="time">{timeAgo(e.created_at)}</span>
+                                        </div>
+                                        <div className="event-desc">{describeEvent(e)}</div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {events.length === 0 && <div className="empty">표시할 이벤트가 없습니다</div>}
+                    </div>
+                </section>
+
+                <aside className="side">
+                    <section className="panel">
+                        <div className="panel-head"><h2>열린 MR <span className="count">{snap.open_mrs.length}</span></h2></div>
+                        <div className="scroll">
+                            {snap.open_mrs.map(mr => (
+                                <div key={mr.id} className="mr" onClick={() => OpenURL(mr.web_url)}>
+                                    <div className="mr-title">{mr.draft && <span className="draft">Draft</span>}!{mr.iid} {mr.title}</div>
+                                    <div className="mr-meta">
+                                        <span>{mr.project_path}</span>
+                                        <span>{mr.author?.username} · {timeAgo(mr.updated_at)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                            {snap.open_mrs.length === 0 && <div className="empty">열린 MR 없음</div>}
+                        </div>
+                    </section>
+                    <section className="panel">
+                        <div className="panel-head"><h2>최근 활동 레포</h2></div>
+                        <div className="scroll">
+                            {snap.projects.map(p => (
+                                <div key={p.id} className="repo" onClick={() => OpenURL(p.web_url)}>
+                                    <span className="repo-name">{p.path_with_namespace}</span>
+                                    <span className="time">{timeAgo(p.last_activity_at)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                </aside>
+            </main>
+            )}
+        </div>
+    );
+}
+
+export default App
