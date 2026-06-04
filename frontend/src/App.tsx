@@ -35,6 +35,10 @@ interface Snapshot {
 
 interface Progress { phase: string; done: number; total: number }
 
+type Period = 7 | 30 | 90;
+const PERIODS: Period[] = [7, 30, 90];
+const periodCutoff = (p: Period) => Date.now() - p * 86_400_000;
+
 // ---- Helpers ----
 function timeAgo(iso: string): string {
     const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -184,9 +188,13 @@ function fmtDur(ms: number): string {
     return `${(h / 24).toFixed(1)}일`;
 }
 
-function CIView({snap}: { snap: Snapshot }) {
-    const pipes = snap.pipelines;
-    const days = useMemo(() => lastNDays(30), [snap.fetched_at]);
+function CIView({snap, period}: { snap: Snapshot; period: Period }) {
+    const pipes = useMemo(() => {
+        const cut = periodCutoff(period);
+        return snap.pipelines.filter(p => new Date(p.created_at).getTime() >= cut);
+    }, [snap.pipelines, period]);
+    const days = useMemo(() => lastNDays(period), [snap.fetched_at, period]);
+    const xEvery = period === 90 ? 10 : period === 30 ? 5 : 1;
 
     const finished = pipes.filter(p => p.status === 'success' || p.status === 'failed');
     const success = pipes.filter(p => p.status === 'success').length;
@@ -232,7 +240,7 @@ function CIView({snap}: { snap: Snapshot }) {
     return (
         <div className="stats scroll">
             <div className="cards">
-                <div className="card"><div className="card-v">{pipes.length}</div><div className="card-l">파이프라인 (30일)</div></div>
+                <div className="card"><div className="card-v">{pipes.length}</div><div className="card-l">파이프라인 ({period}일)</div></div>
                 <div className="card"><div className="card-v" style={{WebkitTextFillColor: rate !== null && rate < 70 ? 'var(--red)' : undefined}}>{rate !== null ? `${rate}%` : '—'}</div><div className="card-l">성공률</div></div>
                 <div className="card"><div className="card-v">{failed.length}</div><div className="card-l">실패</div></div>
                 <div className="card"><div className="card-v">{running.length}</div><div className="card-l">실행/대기 중</div></div>
@@ -241,7 +249,7 @@ function CIView({snap}: { snap: Snapshot }) {
 
             {pipes.length === 0 && (
                 <section className="stat-block">
-                    <div className="empty">최근 30일 내 파이프라인이 없습니다. CI를 사용하는 프로젝트가 활동하면 여기에 표시됩니다.</div>
+                    <div className="empty">최근 {period}일 내 파이프라인이 없습니다. CI를 사용하는 프로젝트가 활동하면 여기에 표시됩니다.</div>
                 </section>
             )}
 
@@ -255,10 +263,9 @@ function CIView({snap}: { snap: Snapshot }) {
             <div className="stat-cols">
                 <section className="stat-block">
                     <h3>날짜별 파이프라인 결과</h3>
-                    <div className="bars">
-                        {days.map(d => {
+                    <div className={`bars ${period === 90 ? 'bars-dense' : ''}`}>
+                        {days.map((d, i) => {
                             const row = daily.get(d)!;
-                            const total = row.ok + row.fail + row.other;
                             return (
                                 <div key={d} className="bar-col" title={`${d} · 성공 ${row.ok}, 실패 ${row.fail}, 기타 ${row.other}`}>
                                     <div className="bar-stack">
@@ -266,7 +273,7 @@ function CIView({snap}: { snap: Snapshot }) {
                                         {row.fail > 0 && <div style={{height: `${(row.fail / dailyMax) * 100}%`, background: 'var(--red)'}}/>}
                                         {row.other > 0 && <div style={{height: `${(row.other / dailyMax) * 100}%`, background: 'var(--muted)'}}/>}
                                     </div>
-                                    <span className="bar-x">{total > 0 || d.slice(8) === '01' ? d.slice(8) : ''}</span>
+                                    <span className="bar-x">{i % xEvery === 0 ? d.slice(8) : ''}</span>
                                 </div>
                             );
                         })}
@@ -326,53 +333,62 @@ function PipeRow({p}: { p: Pipeline }) {
 }
 
 // ---- Stats view ----
-function StatsView({snap}: { snap: Snapshot }) {
+function StatsView({snap, period}: { snap: Snapshot; period: Period }) {
     const [includeBots, setIncludeBots] = useState(false);
-    const days = useMemo(() => lastNDays(30), [snap.fetched_at]);
+    const days = useMemo(() => lastNDays(period), [snap.fetched_at, period]);
+    const xEvery = period === 90 ? 10 : 5;
+    const events = useMemo(() => {
+        const cut = periodCutoff(period);
+        return snap.events.filter(e => new Date(e.created_at).getTime() >= cut);
+    }, [snap.events, period]);
+    const mergedMRs = useMemo(() => {
+        const cut = periodCutoff(period);
+        return snap.merged_mrs.filter(m => m.merged_at && new Date(m.merged_at).getTime() >= cut);
+    }, [snap.merged_mrs, period]);
     const users = useMemo(() => {
-        const all = aggregateUsers(snap.events);
+        const all = aggregateUsers(events);
         return includeBots ? all : all.filter(u => !u.isBot);
-    }, [snap.events, includeBots]);
+    }, [events, includeBots]);
 
     // 날짜별 kind 스택
     const daily = useMemo(() => {
         const m = new Map<string, Record<Kind, number>>();
         for (const d of days) m.set(d, {push: 0, merge: 0, mr: 0, comment: 0, other: 0});
-        for (const e of snap.events) {
+        for (const e of events) {
             const row = m.get(dayKey(e.created_at));
             if (row) row[eventKind(e)]++;
         }
         return m;
-    }, [snap.events, days]);
+    }, [events, days]);
     const dailyMax = Math.max(1, ...[...daily.values()].map(r => KINDS.reduce((s, k) => s + r[k], 0)));
 
     // 레포별 활동
     const repos = useMemo(() => {
         const m = new Map<string, number>();
-        for (const e of snap.events) {
+        for (const e of events) {
             const p = e.project_path || `#${e.project_id}`;
             m.set(p, (m.get(p) ?? 0) + 1);
         }
         return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-    }, [snap.events]);
+    }, [events]);
     const repoMax = Math.max(1, ...repos.map(r => r[1]));
 
     // 시간대별
     const hours = useMemo(() => {
         const h = new Array(24).fill(0);
-        for (const e of snap.events) h[new Date(e.created_at).getHours()]++;
+        for (const e of events) h[new Date(e.created_at).getHours()]++;
         return h;
-    }, [snap.events]);
+    }, [events]);
     const hourMax = Math.max(1, ...hours);
 
     // MR 지표
-    const leadTimes = snap.merged_mrs
+    const leadTimes = mergedMRs
         .filter(m => m.merged_at)
         .map(m => new Date(m.merged_at!).getTime() - new Date(m.created_at).getTime());
     const avgLead = leadTimes.length ? leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length : 0;
     const openAges = snap.open_mrs.map(m => Date.now() - new Date(m.created_at).getTime());
     const avgOpenAge = openAges.length ? openAges.reduce((a, b) => a + b, 0) / openAges.length : 0;
-    const mrOpened30d = snap.events.filter(e => eventKind(e) === 'mr' && e.action_name === 'opened').length;
+    const mrOpened = events.filter(e => eventKind(e) === 'mr' && e.action_name === 'opened').length;
 
     const top = users.slice(0, 10);
     const scoreMax = Math.max(1, ...top.map(u => u.score));
@@ -383,12 +399,12 @@ function StatsView({snap}: { snap: Snapshot }) {
         <div className="stats scroll">
             {/* MR 지표 카드 */}
             <div className="cards">
-                <div className="card"><div className="card-v">{mrOpened30d}</div><div className="card-l">MR 생성 (30일)</div></div>
-                <div className="card"><div className="card-v">{snap.merged_mrs.length}</div><div className="card-l">머지 완료 (30일)</div></div>
+                <div className="card"><div className="card-v">{mrOpened}</div><div className="card-l">MR 생성 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{mergedMRs.length}</div><div className="card-l">머지 완료 ({period}일)</div></div>
                 <div className="card"><div className="card-v">{leadTimes.length ? fmtDur(avgLead) : '—'}</div><div className="card-l">평균 머지 리드타임</div></div>
                 <div className="card"><div className="card-v">{snap.open_mrs.length}</div><div className="card-l">열린 MR</div></div>
                 <div className="card"><div className="card-v">{openAges.length ? fmtDur(avgOpenAge) : '—'}</div><div className="card-l">열린 MR 평균 나이</div></div>
-                <div className="card"><div className="card-v">{snap.events.length}</div><div className="card-l">전체 이벤트 (30일)</div></div>
+                <div className="card"><div className="card-v">{events.length}</div><div className="card-l">전체 이벤트 ({period}일)</div></div>
             </div>
 
             {/* 사용자 리더보드 */}
@@ -416,8 +432,8 @@ function StatsView({snap}: { snap: Snapshot }) {
 
             {/* 사용자 × 날짜 히트맵 */}
             <section className="stat-block">
-                <h3>사용자 × 날짜 활동 히트맵 <span className="hint">최근 30일, 진할수록 활동 많음</span></h3>
-                <div className="heat">
+                <h3>사용자 × 날짜 활동 히트맵 <span className="hint">최근 {period}일, 진할수록 활동 많음</span></h3>
+                <div className={`heat ${period === 90 ? 'heat-sm' : ''}`}>
                     {top.map(u => (
                         <div key={u.username} className="heat-row">
                             <span className="heat-name">{u.name}</span>
@@ -430,7 +446,7 @@ function StatsView({snap}: { snap: Snapshot }) {
                     <div className="heat-row heat-axis">
                         <span className="heat-name"/>
                         {days.map((d, i) => (
-                            <span key={d} className="cell axis">{i % 5 === 0 ? d.slice(8) : ''}</span>
+                            <span key={d} className="cell axis">{i % xEvery === 0 ? d.slice(8) : ''}</span>
                         ))}
                     </div>
                 </div>
@@ -440,8 +456,8 @@ function StatsView({snap}: { snap: Snapshot }) {
                 {/* 날짜별 액션 스택 */}
                 <section className="stat-block">
                     <h3>날짜별 활동 (액션 종류)</h3>
-                    <div className="bars">
-                        {days.map(d => {
+                    <div className={`bars ${period === 90 ? 'bars-dense' : ''}`}>
+                        {days.map((d, i) => {
                             const row = daily.get(d)!;
                             const total = KINDS.reduce((s, k) => s + row[k], 0);
                             return (
@@ -451,7 +467,7 @@ function StatsView({snap}: { snap: Snapshot }) {
                                             <div key={k} style={{height: `${(row[k] / dailyMax) * 100}%`, background: KIND_META[k].color}}/>
                                         ))}
                                     </div>
-                                    <span className="bar-x">{d.slice(8)}</span>
+                                    <span className="bar-x">{i % xEvery === 0 ? d.slice(8) : ''}</span>
                                 </div>
                             );
                         })}
@@ -501,6 +517,7 @@ function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
     const [tab, setTab] = useState<'feed' | 'stats' | 'ci'>('feed');
+    const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
     const [, setTick] = useState(0);
@@ -533,7 +550,9 @@ function App() {
     const events = useMemo(() => {
         if (!snap) return [];
         const q = filter.trim().toLowerCase();
+        const cut = periodCutoff(period);
         return snap.events.filter(e => {
+            if (new Date(e.created_at).getTime() < cut) return false;
             if (kinds.size > 0 && !kinds.has(eventKind(e))) return false;
             if (!q) return true;
             return (e.author?.username || '').toLowerCase().includes(q)
@@ -542,7 +561,7 @@ function App() {
                 || (e.target_title || '').toLowerCase().includes(q)
                 || (e.push_data?.ref || '').toLowerCase().includes(q);
         }).slice(0, FEED_LIMIT);
-    }, [snap, filter, kinds]);
+    }, [snap, filter, kinds, period]);
 
     const toggleKind = (k: Kind) => setKinds(prev => {
         const next = new Set(prev);
@@ -580,6 +599,11 @@ function App() {
                         <button className={tab === 'stats' ? 'tab tab-on' : 'tab'} onClick={() => setTab('stats')}>통계</button>
                         <button className={tab === 'ci' ? 'tab tab-on' : 'tab'} onClick={() => setTab('ci')}>파이프라인</button>
                     </nav>
+                    <nav className="tabs">
+                        {PERIODS.map(p => (
+                            <button key={p} className={period === p ? 'tab tab-on' : 'tab'} onClick={() => setPeriod(p)}>{p}일</button>
+                        ))}
+                    </nav>
                 </div>
                 <div className="chips">
                     {snap.stats && <>
@@ -598,11 +622,11 @@ function App() {
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
             {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap}/> : tab === 'ci' ? <CIView snap={snap}/> : (
+            {tab === 'stats' ? <StatsView snap={snap} period={period}/> : tab === 'ci' ? <CIView snap={snap} period={period}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
-                        <h2>활동 피드 <span className="count">{events.length}{events.length === FEED_LIMIT ? '+' : ''} / 30일</span></h2>
+                        <h2>활동 피드 <span className="count">{events.length}{events.length === FEED_LIMIT ? '+' : ''} / {period}일</span></h2>
                         <div className="filters">
                             {KINDS.map(k => (
                                 <button key={k}

@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	pollInterval  = 30 * time.Second
-	statsWindow   = 30 * 24 * time.Hour // event history kept for statistics
-	maxFetchPages = 20                  // per project, per fetch (×100 events)
-	fetchWorkers  = 6                   // concurrent project-event fetches
+	pollInterval   = 30 * time.Second
+	statsWindowDay = 90                              // history kept, days (frontend can narrow to 7/30/90)
+	statsWindow    = statsWindowDay * 24 * time.Hour // event/pipeline history kept
+	maxFetchPages  = 30                              // per project, per fetch (×100 events)
+	fetchWorkers   = 6                               // concurrent project-event fetches
 )
 
 // projEvents caches one project's events within the stats window.
@@ -123,20 +124,32 @@ func saveJSONFile(path string, v any) {
 	}
 }
 
+// Cache files carry the collection window so widening/narrowing the window
+// in a future build invalidates stale caches instead of leaving holes.
+type eventsCacheFile struct {
+	WindowDays int                 `json:"window_days"`
+	Projects   map[int]*projEvents `json:"projects"`
+}
+
+type pipesCacheFile struct {
+	WindowDays int                    `json:"window_days"`
+	Projects   map[int]*projPipelines `json:"projects"`
+}
+
 func (a *App) loadCache() {
 	if p, err := config.CachePath(); err == nil {
-		cache := map[int]*projEvents{}
-		if loadJSONFile(p, &cache) {
+		var f eventsCacheFile
+		if loadJSONFile(p, &f) && f.WindowDays == statsWindowDay && f.Projects != nil {
 			a.mu.Lock()
-			a.cache = cache
+			a.cache = f.Projects
 			a.mu.Unlock()
 		}
 	}
 	if p, err := config.PipelineCachePath(); err == nil {
-		cache := map[int]*projPipelines{}
-		if loadJSONFile(p, &cache) {
+		var f pipesCacheFile
+		if loadJSONFile(p, &f) && f.WindowDays == statsWindowDay && f.Projects != nil {
 			a.mu.Lock()
-			a.pipeCache = cache
+			a.pipeCache = f.Projects
 			a.mu.Unlock()
 		}
 	}
@@ -147,10 +160,10 @@ func (a *App) saveCache() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if p, err := config.CachePath(); err == nil {
-		saveJSONFile(p, a.cache)
+		saveJSONFile(p, eventsCacheFile{WindowDays: statsWindowDay, Projects: a.cache})
 	}
 	if p, err := config.PipelineCachePath(); err == nil {
-		saveJSONFile(p, a.pipeCache)
+		saveJSONFile(p, pipesCacheFile{WindowDays: statsWindowDay, Projects: a.pipeCache})
 	}
 }
 

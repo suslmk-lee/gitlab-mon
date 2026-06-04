@@ -360,6 +360,8 @@ html, body, #root {
 .cell-4 { background: #39d353; box-shadow: 0 0 10px rgba(57, 211, 83, 0.6); }
 .heat-axis .axis { background: transparent; border: none; color: var(--muted); font-size: 9px; height: auto; box-shadow: none; }
 .heat-axis .axis:hover { transform: none; }
+.heat-sm .cell { width: 10px; height: 10px; border-radius: 2px; }
+.heat-sm .heat-row { gap: 2px; }
 
 /* stacked bars */
 .bars { display: flex; align-items: flex-end; gap: 3px; height: 140px; }
@@ -371,6 +373,9 @@ html, body, #root {
 }
 .bar-stack > div { transition: height 0.4s ease; }
 .bar-x { color: var(--muted); font-size: 9px; text-align: center; height: 14px; }
+.bars-dense { gap: 1px; }
+.bars-dense .bar-col { min-width: 3px; }
+.bars-dense .bar-x { overflow: visible; white-space: nowrap; }
 .legend { display: flex; gap: 14px; margin-top: 8px; color: var(--muted); font-size: 11px; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 4px; }
 
