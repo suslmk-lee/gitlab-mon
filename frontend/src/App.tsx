@@ -27,11 +27,18 @@ interface Pipeline {
     created_at: string; updated_at: string; web_url: string; project_path: string;
 }
 interface CodeDay { user: string; day: string; add: number; del: number; commits: number }
+interface JiraIssue {
+    key: string; summary: string; project_key: string; project_name: string;
+    status: string; status_category: string; assignee: string; priority: string;
+    type: string; created: string; updated: string; due_date: string;
+    resolved: boolean; url: string;
+}
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
     events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
     pipelines: Pipeline[]; code_daily: CodeDay[];
+    jira_issues: JiraIssue[]; jira_url: string;
     error: string; warning: string; needs_config: boolean;
 }
 
@@ -197,6 +204,126 @@ function SetupView({onSaved}: { onSaved: () => void }) {
             <input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="glpat-..."/>
             {err && <div className="error-banner">{err}</div>}
             <button className="btn" onClick={save} disabled={!token}>저장 후 연결</button>
+        </div>
+    );
+}
+
+// ---- Jira view ----
+function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
+    const issues = snap.jira_issues;
+    const today = new Date().toISOString().slice(0, 10);
+    const cut = periodCutoff(period);
+
+    const open = issues.filter(i => i.status_category !== 'done');
+    const inProgress = open.filter(i => i.status_category === 'indeterminate');
+    const createdInPeriod = issues.filter(i => new Date(i.created).getTime() >= cut);
+    const doneInPeriod = issues.filter(i => i.status_category === 'done' && new Date(i.updated).getTime() >= cut);
+    const overdue = open.filter(i => i.due_date && i.due_date < today)
+        .sort((a, b) => a.due_date.localeCompare(b.due_date));
+
+    const byAssignee = useMemo(() => {
+        const m = new Map<string, number>();
+        for (const i of open) {
+            const a = i.assignee || '미지정';
+            m.set(a, (m.get(a) ?? 0) + 1);
+        }
+        return [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    }, [issues]);
+    const assigneeMax = Math.max(1, ...byAssignee.map(([, n]) => n));
+
+    const byProject = useMemo(() => {
+        const m = new Map<string, { name: string; n: number }>();
+        for (const i of open) {
+            let r = m.get(i.project_key);
+            if (!r) { r = {name: i.project_name, n: 0}; m.set(i.project_key, r); }
+            r.n++;
+        }
+        return [...m.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 12);
+    }, [issues]);
+    const projectMax = Math.max(1, ...byProject.map(([, r]) => r.n));
+
+    const recent = issues.slice(0, 25);
+
+    if (issues.length === 0) {
+        return (
+            <div className="stats scroll">
+                <section className="stat-block">
+                    <div className="empty">
+                        Jira 데이터가 없습니다. env.local 또는 환경변수에 JIRA_URL / JIRA_EMAIL / JIRA_TOKEN을
+                        설정하면 5분 주기로 동기화됩니다.
+                    </div>
+                </section>
+            </div>
+        );
+    }
+
+    return (
+        <div className="stats scroll">
+            <div className="cards">
+                <div className="card"><div className="card-v">{open.length}</div><div className="card-l">열린 이슈</div></div>
+                <div className="card"><div className="card-v">{inProgress.length}</div><div className="card-l">진행 중</div></div>
+                <div className="card"><div className="card-v">{createdInPeriod.length}</div><div className="card-l">생성 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{doneInPeriod.length}</div><div className="card-l">완료 ({period}일)</div></div>
+                <div className="card">
+                    <div className="card-v" style={{WebkitTextFillColor: overdue.length > 0 ? 'var(--red)' : undefined}}>{overdue.length}</div>
+                    <div className="card-l">기한 초과</div>
+                </div>
+            </div>
+
+            {overdue.length > 0 && (
+                <section className="stat-block">
+                    <h3>기한 초과 <span className="count">{overdue.length}</span></h3>
+                    {overdue.map(i => (
+                        <div key={i.key} className="pipe" onClick={() => OpenURL(i.url)}>
+                            <span className="jira-key">{i.key}</span>
+                            <span className="pipe-proj">{i.summary}</span>
+                            <span className="jira-assignee">{i.assignee || '미지정'}</span>
+                            <span className="jira-due">~{i.due_date}</span>
+                        </div>
+                    ))}
+                </section>
+            )}
+
+            <div className="stat-cols">
+                <section className="stat-block">
+                    <h3>담당자별 열린 이슈</h3>
+                    {byAssignee.map(([name, n]) => (
+                        <div key={name} className="lb-row">
+                            <span className="lb-name">{name}</span>
+                            <div className="lb-bar-wrap">
+                                <div className="lb-bar" style={{width: `${(n / assigneeMax) * 100}%`}}/>
+                            </div>
+                            <span className="lb-score">{n}</span>
+                        </div>
+                    ))}
+                </section>
+                <section className="stat-block">
+                    <h3>프로젝트별 열린 이슈</h3>
+                    {byProject.map(([key, r]) => (
+                        <div key={key} className="lb-row">
+                            <span className="lb-name" title={r.name}>{key}</span>
+                            <div className="lb-bar-wrap">
+                                <div className="lb-bar lb-bar-repo" style={{width: `${(r.n / projectMax) * 100}%`}}/>
+                            </div>
+                            <span className="lb-score">{r.n}</span>
+                            <span className="lb-detail">{r.name}</span>
+                        </div>
+                    ))}
+                </section>
+            </div>
+
+            <section className="stat-block">
+                <h3>최근 업데이트 <span className="count">{recent.length}</span></h3>
+                {recent.map(i => (
+                    <div key={i.key} className="pipe" onClick={() => OpenURL(i.url)}>
+                        <span className={`jira-status jira-${i.status_category}`}>{i.status}</span>
+                        <span className="jira-key">{i.key}</span>
+                        <span className="pipe-proj">{i.summary}</span>
+                        <span className="jira-assignee">{i.assignee || '미지정'}</span>
+                        <span className="time">{timeAgo(i.updated)}</span>
+                    </div>
+                ))}
+            </section>
         </div>
     );
 }
@@ -718,7 +845,7 @@ const FEED_LIMIT = 300;
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [tab, setTab] = useState<'feed' | 'stats' | 'ci'>('feed');
+    const [tab, setTab] = useState<'feed' | 'stats' | 'ci' | 'jira'>('feed');
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
@@ -733,6 +860,7 @@ function App() {
         merged_mrs: s.merged_mrs ?? [],
         pipelines: s.pipelines ?? [],
         code_daily: s.code_daily ?? [],
+        jira_issues: s.jira_issues ?? [],
     });
     const isReady = (s: any) =>
         s && s.fetched_at && !String(s.fetched_at).startsWith('0001');
@@ -813,6 +941,7 @@ function App() {
                         <button className={tab === 'feed' ? 'tab tab-on' : 'tab'} onClick={() => setTab('feed')}>활동 피드</button>
                         <button className={tab === 'stats' ? 'tab tab-on' : 'tab'} onClick={() => setTab('stats')}>통계</button>
                         <button className={tab === 'ci' ? 'tab tab-on' : 'tab'} onClick={() => setTab('ci')}>파이프라인</button>
+                        <button className={tab === 'jira' ? 'tab tab-on' : 'tab'} onClick={() => setTab('jira')}>Jira</button>
                     </nav>
                     <nav className="tabs">
                         {PERIODS.map(p => (
@@ -837,7 +966,7 @@ function App() {
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
             {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : (
+            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">

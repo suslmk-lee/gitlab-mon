@@ -11,6 +11,9 @@ import (
 type Config struct {
 	GitLabURL   string `json:"gitlab_url"`
 	GitLabToken string `json:"gitlab_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
+	JiraURL     string `json:"jira_url,omitempty"`
+	JiraEmail   string `json:"jira_email,omitempty"`
+	JiraToken   string `json:"jira_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
 }
 
 const defaultURL = "https://ci.quantumcns.ai"
@@ -40,7 +43,15 @@ func Load() Config {
 		} else if legacyFileToken != "" {
 			// 구버전 config.json의 평문 토큰을 Keychain으로 이전
 			if keychainSet(keychainAccount(cfg.GitLabURL), legacyFileToken) == nil {
-				_ = writeConfigFile(Config{GitLabURL: cfg.GitLabURL}) // 파일에서 토큰 제거
+				cfg2 := cfg
+				cfg2.GitLabToken = ""
+				cfg2.JiraToken = ""
+				_ = writeConfigFile(cfg2) // 파일에서 토큰 제거
+			}
+		}
+		if cfg.JiraURL != "" {
+			if t, ok := keychainGet(jiraKeychainAccount(cfg.JiraURL)); ok {
+				cfg.JiraToken = t
 			}
 		}
 	}
@@ -60,8 +71,18 @@ func Load() Config {
 	if v := os.Getenv("GITLAB_TOKEN"); v != "" {
 		cfg.GitLabToken = v
 	}
+	if v := os.Getenv("JIRA_URL"); v != "" {
+		cfg.JiraURL = v
+	}
+	if v := os.Getenv("JIRA_EMAIL"); v != "" {
+		cfg.JiraEmail = v
+	}
+	if v := os.Getenv("JIRA_TOKEN"); v != "" {
+		cfg.JiraToken = v
+	}
 
 	cfg.GitLabURL = strings.TrimRight(cfg.GitLabURL, "/")
+	cfg.JiraURL = strings.TrimRight(cfg.JiraURL, "/")
 	return cfg
 }
 
@@ -69,12 +90,16 @@ func Load() Config {
 // so the single binary works from anywhere without a plaintext secret on disk.
 // If the Keychain is unavailable, it falls back to the legacy plaintext file.
 func Save(cfg Config) error {
-	if keychainAvailable() && cfg.GitLabToken != "" {
-		if err := keychainSet(keychainAccount(cfg.GitLabURL), cfg.GitLabToken); err == nil {
-			return writeConfigFile(Config{GitLabURL: cfg.GitLabURL})
+	onDisk := cfg
+	if keychainAvailable() {
+		if cfg.GitLabToken != "" && keychainSet(keychainAccount(cfg.GitLabURL), cfg.GitLabToken) == nil {
+			onDisk.GitLabToken = ""
+		}
+		if cfg.JiraURL != "" && cfg.JiraToken != "" && keychainSet(jiraKeychainAccount(cfg.JiraURL), cfg.JiraToken) == nil {
+			onDisk.JiraToken = ""
 		}
 	}
-	return writeConfigFile(cfg)
+	return writeConfigFile(onDisk)
 }
 
 func writeConfigFile(cfg Config) error {
@@ -149,6 +174,12 @@ func applyEnvFile(path string, cfg *Config) {
 			cfg.GitLabURL = v
 		case "GITLAB_TOKEN":
 			cfg.GitLabToken = v
+		case "JIRA_URL":
+			cfg.JiraURL = v
+		case "JIRA_EMAIL":
+			cfg.JiraEmail = v
+		case "JIRA_TOKEN":
+			cfg.JiraToken = v
 		}
 	}
 }

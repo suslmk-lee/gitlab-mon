@@ -16,6 +16,7 @@ import (
 
 	"gitlab-mon/internal/config"
 	"gitlab-mon/internal/gitlab"
+	"gitlab-mon/internal/jira"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -63,6 +64,8 @@ type Snapshot struct {
 	MergedMRs   []gitlab.MergeRequest `json:"merged_mrs"` // merged within stats window
 	Pipelines   []gitlab.Pipeline     `json:"pipelines"`  // updated within stats window
 	CodeDaily   []CodeDay             `json:"code_daily"` // 사용자×날짜 라인 변경량 (기본 브랜치)
+	JiraIssues  []jira.Issue          `json:"jira_issues"`
+	JiraURL     string                `json:"jira_url"`
 	Error       string                `json:"error"`
 	Warning     string                `json:"warning"`
 	NeedsConfig bool                  `json:"needs_config"`
@@ -77,17 +80,20 @@ type Progress struct {
 
 // App struct
 type App struct {
-	ctx         context.Context
-	mu          sync.Mutex
-	cfg         config.Config
-	client      *gitlab.Client
-	snap        Snapshot
-	cache       map[int]*projEvents    // projectID → cached events
-	pipeCache   map[int]*projPipelines // projectID → cached pipelines
-	mrCache     map[int]*mrReview      // MR ID → cached review facts
-	commitCache map[int]*projCommits   // projectID → cached commit stats
-	cycle       int                    // poll cycle counter
-	lastSig     uint64                 // signature of the last published snapshot
+	ctx           context.Context
+	mu            sync.Mutex
+	cfg           config.Config
+	client        *gitlab.Client
+	snap          Snapshot
+	cache         map[int]*projEvents    // projectID → cached events
+	pipeCache     map[int]*projPipelines // projectID → cached pipelines
+	mrCache       map[int]*mrReview      // MR ID → cached review facts
+	commitCache   map[int]*projCommits   // projectID → cached commit stats
+	jiraClient    *jira.Client
+	jiraCache     map[string]*jira.Issue // issue key → issue
+	jiraFetchedAt time.Time
+	cycle         int    // poll cycle counter
+	lastSig       uint64 // signature of the last published snapshot
 	// slow-changing metadata, refreshed every slowEvery cycles
 	lastVersion *gitlab.Version
 	lastStats   *gitlab.Statistics
@@ -106,6 +112,7 @@ func NewApp() *App {
 		pipeCache:     map[int]*projPipelines{},
 		mrCache:       map[int]*mrReview{},
 		commitCache:   map[int]*projCommits{},
+		jiraCache:     map[string]*jira.Issue{},
 		notifiedPipes: map[int]bool{},
 		knownMRs:      map[int]bool{},
 	}
@@ -116,9 +123,11 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.cfg = config.Load()
 	a.rebuildClient()
+	_ = config.Save(a.cfg) // 유효 설정을 영속화 (토큰은 Keychain으로)
 	a.loadCache()
 	a.loadMRCache()
 	a.loadCommitsCache()
+	a.loadJiraCache()
 	a.publishFromCache() // 디스크 캐시로 즉시 화면 표시 (이후 폴링이 갱신)
 	go a.pollLoop(ctx)
 }
@@ -126,9 +135,14 @@ func (a *App) startup(ctx context.Context) {
 func (a *App) rebuildClient() {
 	if a.cfg.GitLabToken == "" {
 		a.client = nil
-		return
+	} else {
+		a.client = gitlab.NewClient(a.cfg.GitLabURL, a.cfg.GitLabToken)
 	}
-	a.client = gitlab.NewClient(a.cfg.GitLabURL, a.cfg.GitLabToken)
+	if a.cfg.JiraURL != "" && a.cfg.JiraEmail != "" && a.cfg.JiraToken != "" {
+		a.jiraClient = jira.NewClient(a.cfg.JiraURL, a.cfg.JiraEmail, a.cfg.JiraToken)
+	} else {
+		a.jiraClient = nil
+	}
 }
 
 // ---- Cache persistence ----
@@ -306,6 +320,19 @@ func (a *App) refresh() {
 	a.collectCommits(client, res.projects, since)
 	codeDaily := a.aggregateCodeDaily(users, since)
 
+	// Jira: slow 사이클(5분)에만 증분 동기화
+	a.mu.Lock()
+	jc := a.jiraClient
+	a.mu.Unlock()
+	if jc != nil && slow {
+		if err := a.collectJira(jc, since); err != nil {
+			rmu.Lock()
+			res.errs = append(res.errs, err)
+			rmu.Unlock()
+		}
+	}
+	jiraIssues := a.aggregateJira()
+
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := enrichAll(events, pipelines, [][]gitlab.MergeRequest{res.openMRs, res.merged}, res.projects, groups)
 
@@ -350,6 +377,9 @@ func (a *App) refresh() {
 	if codeDaily == nil {
 		codeDaily = []CodeDay{}
 	}
+	if jiraIssues == nil {
+		jiraIssues = []jira.Issue{}
+	}
 
 	snap.Version = res.version
 	snap.Stats = res.stats
@@ -359,6 +389,8 @@ func (a *App) refresh() {
 	snap.MergedMRs = res.merged
 	snap.Pipelines = pipelines
 	snap.CodeDaily = codeDaily
+	snap.JiraIssues = jiraIssues
+	snap.JiraURL = cfg.JiraURL
 	if len(res.errs) > 0 {
 		// 부분 실패도 전부 노출
 		msgs := make([]string, len(res.errs))
@@ -374,6 +406,7 @@ func (a *App) refresh() {
 		a.saveCache() // 변경이 있을 때만 디스크에 기록
 		a.saveMRCache()
 		a.saveCommitsCache()
+		a.saveJiraCache()
 		a.saveMeta(&metaCache{
 			WindowDays: statsWindowDay,
 			FetchedAt:  snap.FetchedAt,
@@ -733,7 +766,10 @@ func snapshotSig(s *Snapshot) uint64 {
 	for _, m := range s.OpenMRs {
 		w(m.ID, m.UpdatedAt.UnixNano(), len(m.Approvers), m.FirstReviewAt != nil)
 	}
-	w(len(s.MergedMRs), len(s.Pipelines), len(s.CodeDaily))
+	w(len(s.MergedMRs), len(s.Pipelines), len(s.CodeDaily), len(s.JiraIssues))
+	for _, is := range s.JiraIssues {
+		w(is.Key, is.Status, is.Updated.UnixNano())
+	}
 	for _, p := range s.Pipelines {
 		w(p.ID, p.Status)
 	}

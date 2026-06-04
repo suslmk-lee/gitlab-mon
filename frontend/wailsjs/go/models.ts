@@ -288,6 +288,69 @@ export namespace gitlab {
 
 }
 
+export namespace jira {
+	
+	export class Issue {
+	    key: string;
+	    summary: string;
+	    project_key: string;
+	    project_name: string;
+	    status: string;
+	    status_category: string;
+	    assignee: string;
+	    priority: string;
+	    type: string;
+	    // Go type: time
+	    created: any;
+	    // Go type: time
+	    updated: any;
+	    due_date: string;
+	    resolved: boolean;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Issue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.key = source["key"];
+	        this.summary = source["summary"];
+	        this.project_key = source["project_key"];
+	        this.project_name = source["project_name"];
+	        this.status = source["status"];
+	        this.status_category = source["status_category"];
+	        this.assignee = source["assignee"];
+	        this.priority = source["priority"];
+	        this.type = source["type"];
+	        this.created = this.convertValues(source["created"], null);
+	        this.updated = this.convertValues(source["updated"], null);
+	        this.due_date = source["due_date"];
+	        this.resolved = source["resolved"];
+	        this.url = source["url"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace main {
 	
 	export class CodeDay {
@@ -322,6 +385,8 @@ export namespace main {
 	    merged_mrs: gitlab.MergeRequest[];
 	    pipelines: gitlab.Pipeline[];
 	    code_daily: CodeDay[];
+	    jira_issues: jira.Issue[];
+	    jira_url: string;
 	    error: string;
 	    warning: string;
 	    needs_config: boolean;
@@ -342,6 +407,8 @@ export namespace main {
 	        this.merged_mrs = this.convertValues(source["merged_mrs"], gitlab.MergeRequest);
 	        this.pipelines = this.convertValues(source["pipelines"], gitlab.Pipeline);
 	        this.code_daily = this.convertValues(source["code_daily"], CodeDay);
+	        this.jira_issues = this.convertValues(source["jira_issues"], jira.Issue);
+	        this.jira_url = source["jira_url"];
 	        this.error = source["error"];
 	        this.warning = source["warning"];
 	        this.needs_config = source["needs_config"];

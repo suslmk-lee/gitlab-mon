@@ -44,3 +44,7 @@ func keychainDelete(account string) {
 	_ = exec.Command("/usr/bin/security", "delete-generic-password",
 		"-s", keychainService, "-a", account).Run()
 }
+
+func jiraKeychainAccount(jiraURL string) string {
+	return "jira:" + keychainAccount(jiraURL)
+}
