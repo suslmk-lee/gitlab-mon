@@ -272,11 +272,11 @@ func (a *App) refresh() {
 	a.mu.Unlock()
 
 	// Incrementally fetch events for projects whose activity changed.
-	events, capped := a.collectEvents(client, res.projects, since, afterDate)
+	events, capped, evFails := a.collectEvents(client, res.projects, since, afterDate)
 
 	// Incrementally fetch pipelines: live(실행 중)·활동 변경 프로젝트는 매 사이클,
 	// 나머지 CI 프로젝트 전체 스윕은 slowEvery 사이클마다.
-	pipelines := a.collectPipelines(client, res.projects, since, slow)
+	pipelines, pipeFails := a.collectPipelines(client, res.projects, since, slow)
 
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := make(map[int]gitlab.Project, len(res.projects))
@@ -308,6 +308,7 @@ func (a *App) refresh() {
 		}
 	}
 
+	var warnings []string
 	if len(capped) > 0 {
 		var paths []string
 		for _, id := range capped {
@@ -317,8 +318,15 @@ func (a *App) refresh() {
 				paths = append(paths, "#"+strconv.Itoa(id))
 			}
 		}
-		snap.Warning = "이벤트 수집 상한(" + strconv.Itoa(maxFetchPages*100) + "건)에 도달한 프로젝트: " + strings.Join(paths, ", ")
+		warnings = append(warnings, "이벤트 수집 상한("+strconv.Itoa(maxFetchPages*100)+"건)에 도달한 프로젝트: "+strings.Join(paths, ", "))
 	}
+	if evFails > 0 {
+		warnings = append(warnings, "이벤트 수집 실패 "+strconv.Itoa(evFails)+"개 프로젝트 (이전 캐시 유지, 다음 주기 재시도)")
+	}
+	if pipeFails > 0 {
+		warnings = append(warnings, "파이프라인 수집 실패 "+strconv.Itoa(pipeFails)+"개 프로젝트 (이전 캐시 유지, 다음 주기 재시도)")
+	}
+	snap.Warning = strings.Join(warnings, " · ")
 
 	// Keep only recently active projects for the dashboard panel.
 	if len(res.projects) > 30 {
@@ -350,7 +358,12 @@ func (a *App) refresh() {
 	snap.MergedMRs = res.merged
 	snap.Pipelines = pipelines
 	if len(res.errs) > 0 {
-		snap.Error = res.errs[0].Error()
+		// 부분 실패도 전부 노출
+		msgs := make([]string, len(res.errs))
+		for i, e := range res.errs {
+			msgs[i] = e.Error()
+		}
+		snap.Error = strings.Join(msgs, " · ")
 	}
 	if a.publish(snap) {
 		a.saveCache() // 변경이 있을 때만 디스크에 기록
@@ -441,8 +454,9 @@ func fetchProject(client *gitlab.Client, id int, after string, since time.Time, 
 
 // collectEvents keeps a per-project event cache for the stats window and only
 // re-fetches projects whose last_activity_at moved since the previous poll.
-// Returns aggregated events and the IDs of projects that hit the fetch cap.
-func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, since time.Time, afterDate string) ([]gitlab.Event, []int) {
+// Returns aggregated events, the IDs of projects that hit the fetch cap, and
+// the number of projects whose fetch failed (stale cache kept).
+func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, since time.Time, afterDate string) ([]gitlab.Event, []int, int) {
 	a.mu.Lock()
 	var jobs []gitlab.Project
 	active := make(map[int]bool, len(projects))
@@ -469,6 +483,7 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 	a.emitProgress("이벤트", 0, total)
 	var (
 		done      int
+		fails     int
 		cappedIDs []int
 		sem       = make(chan struct{}, fetchWorkers)
 		wg        sync.WaitGroup
@@ -492,6 +507,8 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 				if capped {
 					cappedIDs = append(cappedIDs, p.ID)
 				}
+			} else {
+				fails++
 			}
 			done++
 			d := done
@@ -514,14 +531,14 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 	a.mu.Unlock()
 
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	return all, cappedIDs
+	return all, cappedIDs, fails
 }
 
 // collectPipelines keeps a per-project pipeline cache for the stats window.
 // Every cycle it polls only projects that can have changed: ones with live
 // (running/pending) pipelines or whose activity moved. The remaining
 // CI-enabled projects are swept on slow cycles as a safety net.
-func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project, since time.Time, fullSweep bool) []gitlab.Pipeline {
+func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project, since time.Time, fullSweep bool) ([]gitlab.Pipeline, int) {
 	type job struct {
 		p     gitlab.Project
 		after time.Time
@@ -563,9 +580,10 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 		a.emitProgress("파이프라인", 0, total)
 	}
 	var (
-		done int
-		sem  = make(chan struct{}, fetchWorkers)
-		wg   sync.WaitGroup
+		done  int
+		fails int
+		sem   = make(chan struct{}, fetchWorkers)
+		wg    sync.WaitGroup
 	)
 	now := time.Now()
 	for _, j := range jobs {
@@ -600,6 +618,8 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 				c.LastFetch = now
 				c.LastActivity = j.p.LastActivityAt
 				c.HasCI = len(merged) > 0
+			} else {
+				fails++
 			}
 			done++
 			d := done
@@ -620,7 +640,7 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 	}
 	a.mu.Unlock()
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	return all
+	return all, fails
 }
 
 func hasLivePipeline(c *projPipelines) bool {

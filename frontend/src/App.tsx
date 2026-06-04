@@ -200,7 +200,7 @@ function fmtDur(ms: number): string {
     return `${(h / 24).toFixed(1)}일`;
 }
 
-function CIView({snap, period}: { snap: Snapshot; period: Period }) {
+function CIView({snap, period, onDrill}: { snap: Snapshot; period: Period; onDrill: (q: string) => void }) {
     const pipes = useMemo(() => {
         const cut = periodCutoff(period);
         return snap.pipelines.filter(p => new Date(p.created_at).getTime() >= cut);
@@ -303,7 +303,7 @@ function CIView({snap, period}: { snap: Snapshot; period: Period }) {
                         const pr = r.ok + r.fail > 0 ? Math.round((r.ok / (r.ok + r.fail)) * 100) : null;
                         return (
                             <div key={path} className="lb-row">
-                                <span className="lb-name lb-name-wide" title={path}>{path}</span>
+                                <span className="lb-name lb-name-wide drill" title={`${path} — 클릭하면 피드에서 필터`} onClick={() => onDrill(path)}>{path}</span>
                                 <div className="lb-bar-wrap">
                                     <div className="lb-bar" style={{
                                         width: `${(r.total / projMax) * 100}%`,
@@ -345,7 +345,7 @@ function PipeRow({p}: { p: Pipeline }) {
 }
 
 // ---- Stats view ----
-function StatsView({snap, period}: { snap: Snapshot; period: Period }) {
+function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; onDrill: (q: string) => void }) {
     const [includeBots, setIncludeBots] = useState(false);
     const days = useMemo(() => lastNDays(period), [snap.fetched_at, period]);
     const xEvery = period === 90 ? 10 : 5;
@@ -431,7 +431,7 @@ function StatsView({snap, period}: { snap: Snapshot; period: Period }) {
                 {top.map((u, i) => (
                     <div key={u.username} className="lb-row">
                         <span className="lb-rank">{i + 1}</span>
-                        <span className="lb-name" title={u.username}>{u.name}</span>
+                        <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.name}</span>
                         <div className="lb-bar-wrap">
                             <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
                         </div>
@@ -448,7 +448,7 @@ function StatsView({snap, period}: { snap: Snapshot; period: Period }) {
                 <div className={`heat ${period === 90 ? 'heat-sm' : ''}`}>
                     {top.map(u => (
                         <div key={u.username} className="heat-row">
-                            <span className="heat-name">{u.name}</span>
+                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.name}</span>
                             {days.map(d => {
                                 const v = u.byDay.get(d) ?? 0;
                                 return <span key={d} className={`cell cell-${level(v)}`} title={`${u.name} · ${d} · ${Math.round(v)}점`}/>;
@@ -510,7 +510,7 @@ function StatsView({snap, period}: { snap: Snapshot; period: Period }) {
                 <h3>레포별 활동 Top 10 <span className="hint">이벤트 수 기준</span></h3>
                 {repos.map(([path, n]) => (
                     <div key={path} className="lb-row">
-                        <span className="lb-name lb-name-wide">{path}</span>
+                        <span className="lb-name lb-name-wide drill" title="클릭하면 피드에서 필터" onClick={() => onDrill(path)}>{path}</span>
                         <div className="lb-bar-wrap">
                             <div className="lb-bar lb-bar-repo" style={{width: `${(n / repoMax) * 100}%`}}/>
                         </div>
@@ -580,6 +580,13 @@ function App() {
         }).slice(0, FEED_LIMIT);
     }, [snap, filter, kinds, period]);
 
+    // 통계/CI 화면에서 사용자·레포 클릭 → 피드 탭으로 이동해 필터 적용
+    const drill = (q: string) => {
+        setFilter(q);
+        setKinds(new Set());
+        setTab('feed');
+    };
+
     const toggleKind = (k: Kind) => setKinds(prev => {
         const next = new Set(prev);
         next.has(k) ? next.delete(k) : next.add(k);
@@ -639,7 +646,7 @@ function App() {
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
             {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap} period={period}/> : tab === 'ci' ? <CIView snap={snap} period={period}/> : (
+            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
