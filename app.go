@@ -89,13 +89,19 @@ type App struct {
 	lastVersion *gitlab.Version
 	lastStats   *gitlab.Statistics
 	lastGroups  []gitlab.Group
+	// notification state
+	notifyBaselined bool
+	notifiedPipes   map[int]bool
+	knownMRs        map[int]bool
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
-		cache:     map[int]*projEvents{},
-		pipeCache: map[int]*projPipelines{},
+		cache:         map[int]*projEvents{},
+		pipeCache:     map[int]*projPipelines{},
+		notifiedPipes: map[int]bool{},
+		knownMRs:      map[int]bool{},
 	}
 }
 
@@ -364,6 +370,9 @@ func (a *App) refresh() {
 			msgs[i] = e.Error()
 		}
 		snap.Error = strings.Join(msgs, " · ")
+	}
+	if snap.Error == "" {
+		a.checkNotifications(&snap)
 	}
 	if a.publish(snap) {
 		a.saveCache() // 변경이 있을 때만 디스크에 기록
