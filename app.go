@@ -119,6 +119,7 @@ func (a *App) startup(ctx context.Context) {
 	a.loadCache()
 	a.loadMRCache()
 	a.loadCommitsCache()
+	a.publishFromCache() // 디스크 캐시로 즉시 화면 표시 (이후 폴링이 갱신)
 	go a.pollLoop(ctx)
 }
 
@@ -306,34 +307,7 @@ func (a *App) refresh() {
 	codeDaily := a.aggregateCodeDaily(users, since)
 
 	// Enrich events / MRs with project paths and resolve bot author names.
-	byID := make(map[int]gitlab.Project, len(res.projects))
-	for _, p := range res.projects {
-		byID[p.ID] = p
-	}
-	groupByID := make(map[int]string, len(groups))
-	for _, g := range groups {
-		groupByID[g.ID] = g.FullPath
-	}
-	for i := range events {
-		if p, ok := byID[events[i].ProjectID]; ok {
-			events[i].ProjectPath = p.PathWithNamespace
-			events[i].ProjectURL = p.WebURL
-		}
-		resolveBot(&events[i].Author, byID, groupByID)
-	}
-	for i := range pipelines {
-		if p, ok := byID[pipelines[i].ProjectID]; ok {
-			pipelines[i].ProjectPath = p.PathWithNamespace
-		}
-	}
-	for _, mrs := range [][]gitlab.MergeRequest{res.openMRs, res.merged} {
-		for i := range mrs {
-			if p, ok := byID[mrs[i].ProjectID]; ok {
-				mrs[i].ProjectPath = p.PathWithNamespace
-			}
-			resolveBot(&mrs[i].Author, byID, groupByID)
-		}
-	}
+	byID := enrichAll(events, pipelines, [][]gitlab.MergeRequest{res.openMRs, res.merged}, res.projects, groups)
 
 	var warnings []string
 	if len(capped) > 0 {
@@ -354,6 +328,8 @@ func (a *App) refresh() {
 		warnings = append(warnings, "파이프라인 수집 실패 "+strconv.Itoa(pipeFails)+"개 프로젝트 (이전 캐시 유지, 다음 주기 재시도)")
 	}
 	snap.Warning = strings.Join(warnings, " · ")
+
+	fullProjects := res.projects
 
 	// Keep only recently active projects for the dashboard panel.
 	if len(res.projects) > 30 {
@@ -403,7 +379,52 @@ func (a *App) refresh() {
 		a.saveCache() // 변경이 있을 때만 디스크에 기록
 		a.saveMRCache()
 		a.saveCommitsCache()
+		a.saveMeta(&metaCache{
+			WindowDays: statsWindowDay,
+			FetchedAt:  snap.FetchedAt,
+			Version:    snap.Version,
+			Stats:      snap.Stats,
+			Groups:     groups,
+			Users:      users,
+			Projects:   fullProjects,
+			OpenMRs:    snap.OpenMRs,
+			MergedMRs:  snap.MergedMRs,
+		})
 	}
+}
+
+// enrichAll fills project paths into events/pipelines/MRs and resolves bot
+// author names. Returns the project-by-ID map for further lookups.
+func enrichAll(events []gitlab.Event, pipelines []gitlab.Pipeline, mrLists [][]gitlab.MergeRequest, projects []gitlab.Project, groups []gitlab.Group) map[int]gitlab.Project {
+	byID := make(map[int]gitlab.Project, len(projects))
+	for _, p := range projects {
+		byID[p.ID] = p
+	}
+	groupByID := make(map[int]string, len(groups))
+	for _, g := range groups {
+		groupByID[g.ID] = g.FullPath
+	}
+	for i := range events {
+		if p, ok := byID[events[i].ProjectID]; ok {
+			events[i].ProjectPath = p.PathWithNamespace
+			events[i].ProjectURL = p.WebURL
+		}
+		resolveBot(&events[i].Author, byID, groupByID)
+	}
+	for i := range pipelines {
+		if p, ok := byID[pipelines[i].ProjectID]; ok {
+			pipelines[i].ProjectPath = p.PathWithNamespace
+		}
+	}
+	for _, mrs := range mrLists {
+		for i := range mrs {
+			if p, ok := byID[mrs[i].ProjectID]; ok {
+				mrs[i].ProjectPath = p.PathWithNamespace
+			}
+			resolveBot(&mrs[i].Author, byID, groupByID)
+		}
+	}
+	return byID
 }
 
 // botUserRe matches GitLab's group/project access-token bot usernames,
@@ -554,7 +575,11 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 	}
 	wg.Wait()
 
-	// Aggregate the whole window.
+	return a.aggregateEvents(since), cappedIDs, fails
+}
+
+// aggregateEvents flattens the event cache into one window-bounded slice.
+func (a *App) aggregateEvents(since time.Time) []gitlab.Event {
 	a.mu.Lock()
 	var all []gitlab.Event
 	for _, c := range a.cache {
@@ -565,9 +590,8 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 		}
 	}
 	a.mu.Unlock()
-
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	return all, cappedIDs, fails
+	return all
 }
 
 // collectPipelines keeps a per-project pipeline cache for the stats window.
@@ -665,6 +689,11 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 	}
 	wg.Wait()
 
+	return a.aggregatePipelines(since), fails
+}
+
+// aggregatePipelines flattens the pipeline cache into one window-bounded slice.
+func (a *App) aggregatePipelines(since time.Time) []gitlab.Pipeline {
 	a.mu.Lock()
 	var all []gitlab.Pipeline
 	for _, c := range a.pipeCache {
@@ -676,7 +705,7 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 	}
 	a.mu.Unlock()
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	return all, fails
+	return all
 }
 
 func hasLivePipeline(c *projPipelines) bool {
