@@ -9,7 +9,9 @@
 
 - `internal/gitlab/` — GitLab REST v4 클라이언트 (Events·Projects·MRs·Statistics, admin 토큰으로 `scope=all` 조회)
 - `internal/config/` — 설정 로딩: env vars → `env.local` → `~/Library/Application Support/gitlab-mon/config.json`
-- `app.go` — 폴링 루프 + 스냅샷 캐시, 프론트엔드에 `snapshot` 이벤트로 push
+- `app.go` — 폴링 루프 + 스냅샷 캐시, 프론트엔드에 `snapshot` 이벤트로 push.
+  프로젝트별 이벤트는 증분 수집(이미 받은 이벤트에 도달하면 중단)하고
+  `events-cache.json`에 영속화해 재시작 시 변경분만 재조회
 - `frontend/` — React + TS 대시보드 (다크 테마)
 - `cmd/check/` — UI 없이 API 데이터 경로를 점검하는 헤드리스 도구 (`go run ./cmd/check`)
 

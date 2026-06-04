@@ -25,8 +25,10 @@ interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
     events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
-    error: string; needs_config: boolean;
+    error: string; warning: string; needs_config: boolean;
 }
+
+interface Progress { done: number; total: number }
 
 // ---- Helpers ----
 function timeAgo(iso: string): string {
@@ -336,6 +338,7 @@ const FEED_LIMIT = 300;
 
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
+    const [progress, setProgress] = useState<Progress | null>(null);
     const [tab, setTab] = useState<'feed' | 'stats'>('feed');
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
@@ -354,9 +357,15 @@ function App() {
 
     useEffect(() => {
         GetSnapshot().then(s => { if (isReady(s)) setSnap(normalize(s)); }).catch(() => {});
-        const off = EventsOn('snapshot', (s: any) => { if (isReady(s)) setSnap(normalize(s)); });
+        const off = EventsOn('snapshot', (s: any) => {
+            if (isReady(s)) setSnap(normalize(s));
+            setProgress(null); // 수집 완료
+        });
+        const offP = EventsOn('progress', (p: Progress) => {
+            setProgress(p.total > 0 && p.done < p.total ? p : null);
+        });
         const t = setInterval(() => setTick(n => n + 1), 30_000); // re-render for relative times
-        return () => { off(); clearInterval(t); };
+        return () => { off(); offP(); clearInterval(t); };
     }, []);
 
     const events = useMemo(() => {
@@ -379,7 +388,19 @@ function App() {
         return next;
     });
 
-    if (!snap) return <div className="loading">GitLab 데이터 불러오는 중…</div>;
+    if (!snap) {
+        return (
+            <div className="loading">
+                <div className="loading-box">
+                    <div>GitLab 데이터 불러오는 중…</div>
+                    {progress && <>
+                        <div className="pbar"><div className="pbar-fill" style={{width: `${(progress.done / progress.total) * 100}%`}}/></div>
+                        <div className="pbar-text">프로젝트 이벤트 수집 {progress.done} / {progress.total}</div>
+                    </>}
+                </div>
+            </div>
+        );
+    }
     if (snap.needs_config) return <SetupView onSaved={() => setSnap(null)}/>;
 
     return (
@@ -405,11 +426,14 @@ function App() {
                         <StatChip label="열린 MR" value={String(snap.open_mrs.length)}/>
                     </>}
                     <button className="btn btn-sm" onClick={() => Refresh()}>↻ 새로고침</button>
-                    <span className="fetched">{timeAgo(snap.fetched_at)} 갱신</span>
+                    <span className="fetched">
+                        {progress ? `수집 중 ${progress.done}/${progress.total}` : `${timeAgo(snap.fetched_at)} 갱신`}
+                    </span>
                 </div>
             </header>
 
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
+            {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
             {tab === 'stats' ? <StatsView snap={snap}/> : (
             <main className="grid">

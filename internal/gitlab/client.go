@@ -172,27 +172,37 @@ func (c *Client) GetAllProjects() ([]Project, error) {
 	return all, nil
 }
 
-// GetProjectEvents returns a project's events after the given date (YYYY-MM-DD),
-// newest first, up to maxPages*100 events.
+// GetProjectEventsPage returns one page of a project's events after the given
+// date (YYYY-MM-DD), newest first, and whether more pages exist.
 // Note: the instance-wide /events?scope=all endpoint only returns the current
 // user's dashboard events, so per-project collection is the reliable path.
+func (c *Client) GetProjectEventsPage(projectID int, after string, page int) ([]Event, bool, error) {
+	q := url.Values{}
+	q.Set("per_page", "100")
+	q.Set("page", strconv.Itoa(page))
+	if after != "" {
+		q.Set("after", after)
+	}
+	var batch []Event
+	h, err := c.get("/projects/"+strconv.Itoa(projectID)+"/events", q, &batch)
+	if err != nil {
+		return nil, false, err
+	}
+	next := h.Get("x-next-page")
+	return batch, next != "" && next != "0" && len(batch) > 0, nil
+}
+
+// GetProjectEvents returns a project's events after the given date (YYYY-MM-DD),
+// newest first, up to maxPages*100 events.
 func (c *Client) GetProjectEvents(projectID int, after string, maxPages int) ([]Event, error) {
 	var all []Event
 	for page := 1; page <= maxPages; page++ {
-		q := url.Values{}
-		q.Set("per_page", "100")
-		q.Set("page", strconv.Itoa(page))
-		if after != "" {
-			q.Set("after", after)
-		}
-		var batch []Event
-		h, err := c.get("/projects/"+strconv.Itoa(projectID)+"/events", q, &batch)
+		batch, hasNext, err := c.GetProjectEventsPage(projectID, after, page)
 		if err != nil {
 			return all, err
 		}
 		all = append(all, batch...)
-		next := h.Get("x-next-page")
-		if next == "" || next == "0" || len(batch) == 0 {
+		if !hasNext {
 			break
 		}
 	}

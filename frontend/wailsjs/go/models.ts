@@ -244,6 +244,7 @@ export namespace main {
 	    open_mrs: gitlab.MergeRequest[];
 	    merged_mrs: gitlab.MergeRequest[];
 	    error: string;
+	    warning: string;
 	    needs_config: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -261,6 +262,7 @@ export namespace main {
 	        this.open_mrs = this.convertValues(source["open_mrs"], gitlab.MergeRequest);
 	        this.merged_mrs = this.convertValues(source["merged_mrs"], gitlab.MergeRequest);
 	        this.error = source["error"];
+	        this.warning = source["warning"];
 	        this.needs_config = source["needs_config"];
 	    }
 	

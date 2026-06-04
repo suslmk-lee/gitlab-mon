@@ -74,6 +74,15 @@ func savedPath() (string, error) {
 	return filepath.Join(dir, "gitlab-mon", "config.json"), nil
 }
 
+// CachePath returns the events-cache file location in the user config dir.
+func CachePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "gitlab-mon", "events-cache.json"), nil
+}
+
 func applyEnvFile(path string, cfg *Config) {
 	f, err := os.Open(path)
 	if err != nil {

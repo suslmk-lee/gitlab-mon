@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,16 +19,17 @@ import (
 )
 
 const (
-	pollInterval = 30 * time.Second
-	statsWindow  = 30 * 24 * time.Hour // event history kept for statistics
-	maxEventPage = 5                   // per project, per fetch (×100 events)
-	fetchWorkers = 6                   // concurrent project-event fetches
+	pollInterval  = 30 * time.Second
+	statsWindow   = 30 * 24 * time.Hour // event history kept for statistics
+	maxFetchPages = 20                  // per project, per fetch (×100 events)
+	fetchWorkers  = 6                   // concurrent project-event fetches
 )
 
 // projEvents caches one project's events within the stats window.
+// Exported fields so the cache can be persisted to disk.
 type projEvents struct {
-	lastActivity time.Time
-	events       []gitlab.Event
+	LastActivity time.Time      `json:"last_activity"`
+	Events       []gitlab.Event `json:"events"`
 }
 
 // Snapshot is the full dashboard state pushed to the frontend.
@@ -38,7 +43,14 @@ type Snapshot struct {
 	OpenMRs     []gitlab.MergeRequest `json:"open_mrs"`
 	MergedMRs   []gitlab.MergeRequest `json:"merged_mrs"` // merged within stats window
 	Error       string                `json:"error"`
+	Warning     string                `json:"warning"`
 	NeedsConfig bool                  `json:"needs_config"`
+}
+
+// Progress reports event-collection progress to the frontend.
+type Progress struct {
+	Done  int `json:"done"`
+	Total int `json:"total"`
 }
 
 // App struct
@@ -61,6 +73,7 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.cfg = config.Load()
 	a.rebuildClient()
+	a.loadCache()
 	go a.pollLoop(ctx)
 }
 
@@ -70,6 +83,45 @@ func (a *App) rebuildClient() {
 		return
 	}
 	a.client = gitlab.NewClient(a.cfg.GitLabURL, a.cfg.GitLabToken)
+}
+
+// ---- Cache persistence ----
+
+func (a *App) loadCache() {
+	p, err := config.CachePath()
+	if err != nil {
+		return
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	cache := map[int]*projEvents{}
+	if json.Unmarshal(b, &cache) == nil {
+		a.mu.Lock()
+		a.cache = cache
+		a.mu.Unlock()
+	}
+}
+
+func (a *App) saveCache() {
+	p, err := config.CachePath()
+	if err != nil {
+		return
+	}
+	a.mu.Lock()
+	b, err := json.Marshal(a.cache)
+	a.mu.Unlock()
+	if err != nil {
+		return
+	}
+	if os.MkdirAll(filepath.Dir(p), 0o700) != nil {
+		return
+	}
+	tmp := p + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, p)
+	}
 }
 
 func (a *App) pollLoop(ctx context.Context) {
@@ -139,7 +191,7 @@ func (a *App) refresh() {
 	wg.Wait()
 
 	// Incrementally fetch events for projects whose activity changed.
-	events := a.collectEvents(client, res.projects, since, afterDate)
+	events, capped := a.collectEvents(client, res.projects, since, afterDate)
 
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := make(map[int]gitlab.Project, len(res.projects))
@@ -164,6 +216,18 @@ func (a *App) refresh() {
 			}
 			resolveBot(&mrs[i].Author, byID, groupByID)
 		}
+	}
+
+	if len(capped) > 0 {
+		var paths []string
+		for _, id := range capped {
+			if p, ok := byID[id]; ok {
+				paths = append(paths, p.PathWithNamespace)
+			} else {
+				paths = append(paths, "#"+strconv.Itoa(id))
+			}
+		}
+		snap.Warning = "이벤트 수집 상한(" + strconv.Itoa(maxFetchPages*100) + "건)에 도달한 프로젝트: " + strings.Join(paths, ", ")
 	}
 
 	// Keep only recently active projects for the dashboard panel.
@@ -195,6 +259,7 @@ func (a *App) refresh() {
 		snap.Error = res.errs[0].Error()
 	}
 	a.publish(snap)
+	a.saveCache()
 }
 
 // botUserRe matches GitLab's group/project access-token bot usernames,
@@ -225,11 +290,66 @@ func resolveBot(a *gitlab.Author, byID map[int]gitlab.Project, groupByID map[int
 	}
 }
 
+// fetchProject incrementally fetches one project's events, stopping as soon as
+// a page reaches events already in the cache. Returns the merged window of
+// events (newest first) and whether the page cap was hit before reaching
+// known events (possible data loss).
+func fetchProject(client *gitlab.Client, id int, after string, since time.Time, cached *projEvents) ([]gitlab.Event, bool, error) {
+	known := map[int]bool{}
+	var newest time.Time
+	if cached != nil {
+		for _, e := range cached.Events {
+			known[e.ID] = true
+		}
+		if len(cached.Events) > 0 {
+			newest = cached.Events[0].CreatedAt
+		}
+	}
+
+	var fresh []gitlab.Event
+	capped := true
+	for page := 1; page <= maxFetchPages; page++ {
+		batch, hasNext, err := client.GetProjectEventsPage(id, after, page)
+		if err != nil {
+			return nil, false, err
+		}
+		reachedKnown := false
+		for _, e := range batch {
+			if known[e.ID] || (!newest.IsZero() && e.CreatedAt.Before(newest)) {
+				reachedKnown = true
+				continue
+			}
+			fresh = append(fresh, e)
+		}
+		if reachedKnown || !hasNext {
+			capped = false
+			break
+		}
+	}
+
+	// Merge fresh + cached, dedupe by ID, keep window, newest first.
+	merged := fresh
+	if cached != nil {
+		seen := make(map[int]bool, len(fresh))
+		for _, e := range fresh {
+			seen[e.ID] = true
+		}
+		for _, e := range cached.Events {
+			if !seen[e.ID] && !e.CreatedAt.Before(since) {
+				merged = append(merged, e)
+			}
+		}
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].CreatedAt.After(merged[j].CreatedAt) })
+	return merged, capped, nil
+}
+
 // collectEvents keeps a per-project event cache for the stats window and only
 // re-fetches projects whose last_activity_at moved since the previous poll.
-func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, since time.Time, afterDate string) []gitlab.Event {
+// Returns aggregated events and the IDs of projects that hit the fetch cap.
+func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, since time.Time, afterDate string) ([]gitlab.Event, []int) {
 	a.mu.Lock()
-	var jobs []int
+	var jobs []gitlab.Project
 	active := make(map[int]bool, len(projects))
 	for _, p := range projects {
 		if p.LastActivityAt.Before(since) {
@@ -237,8 +357,8 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 		}
 		active[p.ID] = true
 		c, ok := a.cache[p.ID]
-		if !ok || p.LastActivityAt.After(c.lastActivity) {
-			jobs = append(jobs, p.ID)
+		if !ok || p.LastActivityAt.After(c.LastActivity) {
+			jobs = append(jobs, p)
 		}
 	}
 	// Drop cache entries that fell out of the window.
@@ -249,36 +369,48 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 	}
 	a.mu.Unlock()
 
-	// Fetch changed projects with bounded concurrency.
-	sem := make(chan struct{}, fetchWorkers)
-	var wg sync.WaitGroup
-	for _, id := range jobs {
+	// Fetch changed projects with bounded concurrency, reporting progress.
+	total := len(jobs)
+	a.emitProgress(0, total)
+	var (
+		done      int
+		cappedIDs []int
+		sem       = make(chan struct{}, fetchWorkers)
+		wg        sync.WaitGroup
+	)
+	for _, p := range jobs {
 		wg.Add(1)
-		go func(id int) {
+		go func(p gitlab.Project) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			evs, err := client.GetProjectEvents(id, afterDate, maxEventPage)
-			if err != nil {
-				return // keep stale cache on error
-			}
+
 			a.mu.Lock()
-			a.cache[id] = &projEvents{events: evs}
+			cached := a.cache[p.ID]
 			a.mu.Unlock()
-		}(id)
+
+			merged, capped, err := fetchProject(client, p.ID, afterDate, since, cached)
+
+			a.mu.Lock()
+			if err == nil {
+				a.cache[p.ID] = &projEvents{LastActivity: p.LastActivityAt, Events: merged}
+				if capped {
+					cappedIDs = append(cappedIDs, p.ID)
+				}
+			}
+			done++
+			d := done
+			a.mu.Unlock()
+			a.emitProgress(d, total)
+		}(p)
 	}
 	wg.Wait()
 
-	// Stamp lastActivity after successful fetch and aggregate.
+	// Aggregate the whole window.
 	a.mu.Lock()
-	for _, p := range projects {
-		if c, ok := a.cache[p.ID]; ok && c.lastActivity.IsZero() {
-			c.lastActivity = p.LastActivityAt
-		}
-	}
 	var all []gitlab.Event
 	for _, c := range a.cache {
-		for _, e := range c.events {
+		for _, e := range c.Events {
 			if !e.CreatedAt.Before(since) {
 				all = append(all, e)
 			}
@@ -287,7 +419,16 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 	a.mu.Unlock()
 
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt.After(all[j].CreatedAt) })
-	return all
+	return all, cappedIDs
+}
+
+func (a *App) emitProgress(done, total int) {
+	a.mu.Lock()
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx != nil {
+		runtime.EventsEmit(ctx, "progress", Progress{Done: done, Total: total})
+	}
 }
 
 func (a *App) publish(snap Snapshot) {

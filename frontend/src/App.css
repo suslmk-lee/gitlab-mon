@@ -379,3 +379,37 @@ html, body, #root {
     display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
 }
 .toggle input { accent-color: var(--accent); cursor: pointer; }
+
+/* ---- Loading progress ---- */
+.loading-box {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    background: var(--glass);
+    backdrop-filter: blur(28px) saturate(1.5);
+    -webkit-backdrop-filter: blur(28px) saturate(1.5);
+    border: 1px solid var(--stroke); border-radius: 18px;
+    padding: 32px 44px;
+    box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+.pbar {
+    width: 260px; height: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px; overflow: hidden;
+}
+.pbar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, rgba(31, 111, 235, 0.9), rgba(108, 182, 255, 1));
+    box-shadow: 0 0 12px rgba(108, 182, 255, 0.6);
+    border-radius: 6px;
+    transition: width 0.3s ease;
+}
+.pbar-text { color: var(--muted); font-size: 11px; }
+
+.warn-banner {
+    background: rgba(251, 191, 36, 0.08);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    color: var(--orange); border-radius: 10px;
+    margin: 10px 14px 0; padding: 7px 13px; font-size: 12px;
+}
