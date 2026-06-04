@@ -27,6 +27,8 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
+		// 창을 닫아도 앱은 백그라운드에서 수집·알림 지속 (Dock 클릭으로 재표시)
+		HideWindowOnClose: true,
 		Mac: &mac.Options{
 			WindowIsTranslucent:  true,
 			WebviewIsTransparent: true,

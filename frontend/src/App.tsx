@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -467,7 +467,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
     const reviewerMax = Math.max(1, ...reviewers.map(r => r.approvals * 2 + r.comments));
 
     // 코드 변경량 (기본 브랜치 커밋, 사용자×날짜 → 기간 집계)
-    const codeByUser = useMemo(() => {
+    const codeAgg = useMemo(() => {
         const cutDay = new Date(periodCutoff(period));
         const cut = `${cutDay.getFullYear()}-${String(cutDay.getMonth() + 1).padStart(2, '0')}-${String(cutDay.getDate()).padStart(2, '0')}`;
         const m = new Map<string, { add: number; del: number; commits: number }>();
@@ -477,13 +477,38 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
             if (!row) { row = {add: 0, del: 0, commits: 0}; m.set(r.user, row); }
             row.add += r.add; row.del += r.del; row.commits += r.commits;
         }
-        return [...m.entries()]
-            .sort((a, b) => (b[1].add + b[1].del) - (a[1].add + a[1].del))
-            .slice(0, 10);
+        return m;
     }, [snap.code_daily, period]);
+    const codeByUser = useMemo(() =>
+        [...codeAgg.entries()]
+            .sort((a, b) => (b[1].add + b[1].del) - (a[1].add + a[1].del))
+            .slice(0, 10),
+    [codeAgg]);
     const codeMax = Math.max(1, ...codeByUser.map(([, r]) => r.add + r.del));
     const codeTotals = codeByUser.reduce((acc, [, r]) => ({add: acc.add + r.add, del: acc.del + r.del}), {add: 0, del: 0});
     const fmtN = (n: number) => n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+
+    // 유휴 레포: 기간 내 활동 없음
+    const idleRepos = useMemo(() => {
+        const cut = periodCutoff(period);
+        return snap.projects.filter(p => new Date(p.last_activity_at).getTime() < cut);
+    }, [snap.projects, period]);
+
+    // CSV 내보내기 (현재 기간·가중치 기준 사용자 요약)
+    const [toast, setToast] = useState('');
+    const exportCSV = async () => {
+        const q = (v: any) => `"${String(v).replace(/"/g, '""')}"`;
+        const head = ['순위', 'username', '이름', '활동지수', '커밋', 'push', 'MR생성', '머지', '댓글', '추가라인', '삭제라인'];
+        const rows = users.map((u, i) => {
+            const c = codeAgg.get(u.username);
+            return [i + 1, u.username, u.name, Math.round(u.score), u.commits, u.pushes, u.mrs, u.merges, u.comments, c?.add ?? '', c?.del ?? ''];
+        });
+        const csv = '\uFEFF' + [head, ...rows].map(r => r.map(q).join(',')).join('\n');
+        const name = `gitlab-mon-활동-${period}일-${new Date().toISOString().slice(0, 10)}.csv`;
+        const res = await SaveCSV(name, csv);
+        setToast(res.startsWith('ERR:') ? `저장 실패: ${res.slice(4)}` : `저장됨: ${res}`);
+        setTimeout(() => setToast(''), 6000);
+    };
 
     const top = users.slice(0, 10);
     const scoreMax = Math.max(1, ...top.map(u => u.score));
@@ -515,6 +540,8 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                     사용자별 활동 지수
                     <span className="hint">커밋 {weights.commit} · MR {weights.mrOpen} · 머지 {weights.merge} · 댓글 {weights.comment}</span>
                     <button className="gear" title="가중치 설정" onClick={() => setShowCfg(v => !v)}>⚙</button>
+                    <button className="btn btn-sm csv-btn" onClick={exportCSV}>CSV 내보내기</button>
+                    {toast && <span className="toast">{toast}</span>}
                     <label className="toggle">
                         <input type="checkbox" checked={includeBots} onChange={e => setIncludeBots(e.target.checked)}/>
                         토큰봇 포함
@@ -666,6 +693,20 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                         <span className="lb-score">{n}</span>
                     </div>
                 ))}
+            </section>
+
+            {/* 유휴 레포 */}
+            <section className="stat-block">
+                <h3>유휴 레포 <span className="hint">{period}일 내 활동 없음 · {idleRepos.length}개 / 전체 {snap.projects.length}개</span></h3>
+                <div className="idle-list">
+                    {idleRepos.map(p => (
+                        <div key={p.id} className="repo" onClick={() => OpenURL(p.web_url)}>
+                            <span className="repo-name">{p.path_with_namespace}</span>
+                            <span className="time">{timeAgo(p.last_activity_at)}</span>
+                        </div>
+                    ))}
+                    {idleRepos.length === 0 && <div className="empty">유휴 레포 없음 — 모든 레포가 활동 중</div>}
+                </div>
             </section>
         </div>
     );
@@ -855,7 +896,7 @@ function App() {
                     <section className="panel">
                         <div className="panel-head"><h2>최근 활동 레포</h2></div>
                         <div className="scroll">
-                            {snap.projects.map(p => (
+                            {snap.projects.slice(0, 30).map(p => (
                                 <div key={p.id} className="repo" onClick={() => OpenURL(p.web_url)}>
                                     <span className="repo-name">{p.path_with_namespace}</span>
                                     <span className="time">{timeAgo(p.last_activity_at)}</span>

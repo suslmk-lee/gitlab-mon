@@ -10,4 +10,6 @@ export function OpenURL(arg1:string):Promise<void>;
 
 export function Refresh():Promise<void>;
 
+export function SaveCSV(arg1:string,arg2:string):Promise<string>;
+
 export function SaveConfig(arg1:string,arg2:string):Promise<string>;

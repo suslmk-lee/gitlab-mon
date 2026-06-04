@@ -87,9 +87,6 @@ func (a *App) publishFromCache() {
 	enrichAll(events, pipelines, [][]gitlab.MergeRequest{m.OpenMRs, m.MergedMRs}, m.Projects, m.Groups)
 
 	projects := m.Projects
-	if len(projects) > 30 {
-		projects = projects[:30]
-	}
 	if events == nil {
 		events = []gitlab.Event{}
 	}

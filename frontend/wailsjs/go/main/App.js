@@ -18,6 +18,10 @@ export function Refresh() {
   return window['go']['main']['App']['Refresh']();
 }
 
+export function SaveCSV(arg1, arg2) {
+  return window['go']['main']['App']['SaveCSV'](arg1, arg2);
+}
+
 export function SaveConfig(arg1, arg2) {
   return window['go']['main']['App']['SaveConfig'](arg1, arg2);
 }

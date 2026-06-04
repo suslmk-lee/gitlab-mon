@@ -331,11 +331,6 @@ func (a *App) refresh() {
 
 	fullProjects := res.projects
 
-	// Keep only recently active projects for the dashboard panel.
-	if len(res.projects) > 30 {
-		res.projects = res.projects[:30]
-	}
-
 	// nil slices marshal to JSON null — always send arrays to the frontend.
 	if events == nil {
 		events = []gitlab.Event{}
