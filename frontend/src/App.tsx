@@ -286,11 +286,11 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                         rows.push({i: t, kids: kids.length, hidden: isCollapsed ? kids.length : 0});
                         if (!isCollapsed) kids.forEach(k => rows.push({i: k, kids: 0, hidden: 0}));
                     }
+                    // 부모가 다른 컬럼에 있는 자식은 항상 표시 (접기는 같은 컬럼의 자식만 대상)
                     const orphans = subsAll.filter(sb => !topKeys.has(sb.parent_key))
                         .sort((a, b) => a.parent_key.localeCompare(b.parent_key));
-                    // 부모가 다른 컬럼에 있어도 접혀 있으면 자식 숨김
                     for (const o of orphans) {
-                        if (!collapsed.has(o.parent_key)) rows.push({i: o, kids: 0, hidden: 0});
+                        rows.push({i: o, kids: 0, hidden: 0});
                     }
 
                     const total = inCol.length;
