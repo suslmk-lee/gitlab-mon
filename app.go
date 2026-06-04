@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,11 +22,19 @@ import (
 
 const (
 	pollInterval   = 30 * time.Second
+	slowEvery      = 10                              // version/stats/groups + CI full sweep cadence (cycles)
 	statsWindowDay = 90                              // history kept, days (frontend can narrow to 7/30/90)
 	statsWindow    = statsWindowDay * 24 * time.Hour // event/pipeline history kept
 	maxFetchPages  = 30                              // per project, per fetch (×100 events)
 	fetchWorkers   = 6                               // concurrent project-event fetches
 )
+
+// pipeLive marks pipeline statuses that can still transition — these are the
+// only ones worth polling every cycle.
+var pipeLive = map[string]bool{
+	"created": true, "waiting_for_resource": true, "preparing": true,
+	"pending": true, "running": true, "scheduled": true,
+}
 
 // projEvents caches one project's events within the stats window.
 // Exported fields so the cache can be persisted to disk.
@@ -73,6 +83,12 @@ type App struct {
 	snap      Snapshot
 	cache     map[int]*projEvents    // projectID → cached events
 	pipeCache map[int]*projPipelines // projectID → cached pipelines
+	cycle     int                    // poll cycle counter
+	lastSig   uint64                 // signature of the last published snapshot
+	// slow-changing metadata, refreshed every slowEvery cycles
+	lastVersion *gitlab.Version
+	lastStats   *gitlab.Statistics
+	lastGroups  []gitlab.Group
 }
 
 // NewApp creates a new App application struct
@@ -185,6 +201,8 @@ func (a *App) refresh() {
 	a.mu.Lock()
 	client := a.client
 	cfg := a.cfg
+	a.cycle++
+	slow := a.cycle == 1 || a.cycle%slowEvery == 0 || a.lastVersion == nil
 	a.mu.Unlock()
 
 	snap := Snapshot{FetchedAt: time.Now(), GitLabURL: cfg.GitLabURL}
@@ -222,10 +240,13 @@ func (a *App) refresh() {
 		}
 	)
 	var groups []gitlab.Group
-	call(func() (err error) { res.version, err = client.GetVersion(); return })
-	call(func() (err error) { res.stats, err = client.GetStatistics(); return })
+	if slow {
+		// 느리게 변하는 메타데이터는 slowEvery 사이클(5분)마다만 조회
+		call(func() (err error) { res.version, err = client.GetVersion(); return })
+		call(func() (err error) { res.stats, err = client.GetStatistics(); return })
+		call(func() (err error) { groups, err = client.GetAllGroups(); return })
+	}
 	call(func() (err error) { res.projects, err = client.GetAllProjects(); return })
-	call(func() (err error) { groups, err = client.GetAllGroups(); return })
 	call(func() (err error) { res.openMRs, err = client.GetOpenMergeRequests(); return })
 	call(func() (err error) {
 		res.merged, err = client.GetMergedMergeRequests(since.UTC().Format(time.RFC3339))
@@ -233,11 +254,29 @@ func (a *App) refresh() {
 	})
 	wg.Wait()
 
+	a.mu.Lock()
+	if slow {
+		if res.version != nil {
+			a.lastVersion = res.version
+		}
+		if res.stats != nil {
+			a.lastStats = res.stats
+		}
+		if groups != nil {
+			a.lastGroups = groups
+		}
+	}
+	res.version = a.lastVersion
+	res.stats = a.lastStats
+	groups = a.lastGroups
+	a.mu.Unlock()
+
 	// Incrementally fetch events for projects whose activity changed.
 	events, capped := a.collectEvents(client, res.projects, since, afterDate)
 
-	// Incrementally fetch pipelines for CI-enabled projects.
-	pipelines := a.collectPipelines(client, res.projects, since)
+	// Incrementally fetch pipelines: live(실행 중)·활동 변경 프로젝트는 매 사이클,
+	// 나머지 CI 프로젝트 전체 스윕은 slowEvery 사이클마다.
+	pipelines := a.collectPipelines(client, res.projects, since, slow)
 
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := make(map[int]gitlab.Project, len(res.projects))
@@ -313,8 +352,9 @@ func (a *App) refresh() {
 	if len(res.errs) > 0 {
 		snap.Error = res.errs[0].Error()
 	}
-	a.publish(snap)
-	a.saveCache()
+	if a.publish(snap) {
+		a.saveCache() // 변경이 있을 때만 디스크에 기록
+	}
 }
 
 // botUserRe matches GitLab's group/project access-token bot usernames,
@@ -478,9 +518,10 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 }
 
 // collectPipelines keeps a per-project pipeline cache for the stats window.
-// CI-enabled projects are polled incrementally (updated_after the last fetch);
-// projects without CI are re-checked only when their activity changes.
-func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project, since time.Time) []gitlab.Pipeline {
+// Every cycle it polls only projects that can have changed: ones with live
+// (running/pending) pipelines or whose activity moved. The remaining
+// CI-enabled projects are swept on slow cycles as a safety net.
+func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project, since time.Time, fullSweep bool) []gitlab.Pipeline {
 	type job struct {
 		p     gitlab.Project
 		after time.Time
@@ -497,11 +538,17 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 		switch {
 		case !ok:
 			jobs = append(jobs, job{p, since}) // first sight: full window
-		case c.HasCI:
-			// overlap 10m so status transitions are never missed
+		case p.LastActivityAt.After(c.LastActivity) && c.HasCI:
+			// push 등 활동 발생 → 새 파이프라인 가능성
 			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
 		case p.LastActivityAt.After(c.LastActivity):
 			jobs = append(jobs, job{p, since}) // CI may have been enabled since
+		case hasLivePipeline(c):
+			// 실행 중인 파이프라인의 상태 전이 추적
+			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
+		case fullSweep && c.HasCI:
+			// 안전망: 놓친 변경을 5분마다 한 번 회수
+			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
 		}
 	}
 	for id := range a.pipeCache {
@@ -576,6 +623,15 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 	return all
 }
 
+func hasLivePipeline(c *projPipelines) bool {
+	for _, pl := range c.Pipelines {
+		if pipeLive[pl.Status] {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) emitProgress(phase string, done, total int) {
 	a.mu.Lock()
 	ctx := a.ctx
@@ -585,14 +641,51 @@ func (a *App) emitProgress(phase string, done, total int) {
 	}
 }
 
-func (a *App) publish(snap Snapshot) {
+// snapshotSig fingerprints the parts of a snapshot the UI cares about, so
+// unchanged cycles can skip the multi-MB bridge emit and disk write.
+func snapshotSig(s *Snapshot) uint64 {
+	h := fnv.New64a()
+	w := func(vals ...any) { fmt.Fprint(h, vals...) }
+	w(len(s.Events))
+	if len(s.Events) > 0 {
+		w(s.Events[0].ID)
+	}
+	for _, m := range s.OpenMRs {
+		w(m.ID, m.UpdatedAt.UnixNano())
+	}
+	w(len(s.MergedMRs), len(s.Pipelines))
+	for _, p := range s.Pipelines {
+		w(p.ID, p.Status)
+	}
+	w(s.Error, s.Warning, s.NeedsConfig)
+	if s.Version != nil {
+		w(s.Version.Version)
+	}
+	if s.Stats != nil {
+		w(s.Stats.Projects, s.Stats.Users, s.Stats.Groups)
+	}
+	return h.Sum64()
+}
+
+// publish stores the snapshot and notifies the frontend. Returns true when
+// the data actually changed; unchanged cycles emit a lightweight "tick" with
+// the refresh timestamp instead of re-sending the whole snapshot.
+func (a *App) publish(snap Snapshot) bool {
+	sig := snapshotSig(&snap)
 	a.mu.Lock()
+	changed := sig != a.lastSig || a.snap.FetchedAt.IsZero()
+	a.lastSig = sig
 	a.snap = snap
 	ctx := a.ctx
 	a.mu.Unlock()
 	if ctx != nil {
-		runtime.EventsEmit(ctx, "snapshot", snap)
+		if changed {
+			runtime.EventsEmit(ctx, "snapshot", snap)
+		} else {
+			runtime.EventsEmit(ctx, "tick", snap.FetchedAt)
+		}
 	}
+	return changed
 }
 
 // ---- Bound methods (callable from frontend) ----

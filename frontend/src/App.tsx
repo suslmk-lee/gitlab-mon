@@ -145,6 +145,18 @@ function StatChip({label, value}: { label: string; value: string }) {
     return <div className="chip"><span className="chip-value">{value}</span><span className="chip-label">{label}</span></div>;
 }
 
+// 초 단위 갱신 표시 — 이 컴포넌트만 1초마다 리렌더
+function LastUpdated({ts}: { ts: string }) {
+    const [, setT] = useState(0);
+    useEffect(() => {
+        const i = setInterval(() => setT(n => n + 1), 1000);
+        return () => clearInterval(i);
+    }, []);
+    const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
+    const txt = s < 60 ? `${s}초 전` : s < 3600 ? `${Math.floor(s / 60)}분 ${s % 60}초 전` : timeAgo(ts);
+    return <span className="fetched" title="30초 주기로 자동 갱신됩니다">{txt} 갱신 · 30s 주기</span>;
+}
+
 function SetupView({onSaved}: { onSaved: () => void }) {
     const [url, setUrl] = useState('https://ci.quantumcns.ai');
     const [token, setToken] = useState('');
@@ -540,11 +552,16 @@ function App() {
             if (isReady(s)) setSnap(normalize(s));
             setProgress(null); // 수집 완료
         });
+        const offT = EventsOn('tick', (ts: string) => {
+            // 데이터 변경 없음: 갱신 시각만 업데이트
+            setSnap(prev => prev ? {...prev, fetched_at: ts} : prev);
+            setProgress(null);
+        });
         const offP = EventsOn('progress', (p: Progress) => {
             setProgress(p.total > 0 && p.done < p.total ? p : null);
         });
         const t = setInterval(() => setTick(n => n + 1), 30_000); // re-render for relative times
-        return () => { off(); offP(); clearInterval(t); };
+        return () => { off(); offT(); offP(); clearInterval(t); };
     }, []);
 
     const events = useMemo(() => {
@@ -613,9 +630,9 @@ function App() {
                         <StatChip label="열린 MR" value={String(snap.open_mrs.length)}/>
                     </>}
                     <button className="btn btn-sm" onClick={() => Refresh()}>↻ 새로고침</button>
-                    <span className="fetched">
-                        {progress ? `${progress.phase} 수집 ${progress.done}/${progress.total}` : `${timeAgo(snap.fetched_at)} 갱신`}
-                    </span>
+                    {progress
+                        ? <span className="fetched">{progress.phase} 수집 {progress.done}/{progress.total}</span>
+                        : <LastUpdated ts={snap.fetched_at}/>}
                 </div>
             </header>
 
