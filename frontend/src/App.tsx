@@ -215,6 +215,7 @@ const CAT_ORDER: Record<string, number> = {new: 0, indeterminate: 1, done: 2};
 function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectKey: string; onBack: () => void }) {
     const [moving, setMoving] = useState<string | null>(null);
     const [err, setErr] = useState('');
+    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
     const projIssues = useMemo(() => issues.filter(i => i.project_key === projectKey), [issues, projectKey]);
     const projectName = projIssues[0]?.project_name || projectKey;
 
@@ -225,6 +226,19 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
         return [...seen.entries()].sort((a, b) =>
             (CAT_ORDER[a[1]] ?? 9) - (CAT_ORDER[b[1]] ?? 9) || a[0].localeCompare(b[0]));
     }, [projIssues]);
+
+    // 하위 이슈를 가진 모든 부모 키 (전체 접기/펼치기용)
+    const parentKeys = useMemo(() => {
+        const withKids = new Set(projIssues.map(i => i.parent_key).filter(Boolean));
+        return [...withKids];
+    }, [projIssues]);
+    const allCollapsed = parentKeys.length > 0 && parentKeys.every(k => collapsed.has(k));
+
+    const toggle = (key: string) => setCollapsed(prev => {
+        const next = new Set(prev);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+    });
 
     const drop = async (e: React.DragEvent, status: string) => {
         e.preventDefault();
@@ -247,40 +261,53 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
             <div className="board-head">
                 <button className="btn btn-sm" onClick={onBack}>← 전체 현황</button>
                 <h2>{projectKey} <span className="hint">{projectName} · 카드를 드래그하면 상태가 변경됩니다</span></h2>
+                {parentKeys.length > 0 && (
+                    <button className="btn btn-sm" onClick={() =>
+                        setCollapsed(allCollapsed ? new Set() : new Set(parentKeys))}>
+                        {allCollapsed ? '▾ 전체 펼치기' : '▸ 전체 접기'}
+                    </button>
+                )}
             </div>
             {err && <div className="error-banner">⚠ {err}</div>}
             <div className="board">
                 {columns.map(([status, cat]) => {
                     const inCol = projIssues.filter(i => i.status === status)
                         .sort((a, b) => (a.due_date || '9999') < (b.due_date || '9999') ? -1 : 1);
-                    // 부모/단독 이슈 먼저, 하위 이슈는 같은 컬럼의 부모 바로 아래에
                     const tops = inCol.filter(i => !i.parent_key);
-                    const subs = inCol.filter(i => i.parent_key);
-                    const cards: JiraIssue[] = [];
-                    const placed = new Set<string>();
+                    const subsAll = inCol.filter(i => i.parent_key);
+                    const topKeys = new Set(tops.map(t => t.key));
+
+                    // 행 구성: 부모 + (펼침 상태면) 자식들, 그 뒤에 부모가 다른 컬럼인 하위 이슈
+                    type Row = { i: JiraIssue; kids: number; hidden: number };
+                    const rows: Row[] = [];
                     for (const t of tops) {
-                        cards.push(t);
-                        for (const sb of subs) {
-                            if (sb.parent_key === t.key) { cards.push(sb); placed.add(sb.key); }
-                        }
+                        const kids = subsAll.filter(sb => sb.parent_key === t.key);
+                        const isCollapsed = collapsed.has(t.key);
+                        rows.push({i: t, kids: kids.length, hidden: isCollapsed ? kids.length : 0});
+                        if (!isCollapsed) kids.forEach(k => rows.push({i: k, kids: 0, hidden: 0}));
                     }
-                    // 부모가 다른 컬럼에 있는 하위 이슈: 부모키 순으로 묶어 뒤에
-                    cards.push(...subs.filter(sb => !placed.has(sb.key))
-                        .sort((a, b) => a.parent_key.localeCompare(b.parent_key)));
-                    const shown = cat === 'done' ? cards.slice(0, 15) : cards;
+                    const orphans = subsAll.filter(sb => !topKeys.has(sb.parent_key))
+                        .sort((a, b) => a.parent_key.localeCompare(b.parent_key));
+                    // 부모가 다른 컬럼에 있어도 접혀 있으면 자식 숨김
+                    for (const o of orphans) {
+                        if (!collapsed.has(o.parent_key)) rows.push({i: o, kids: 0, hidden: 0});
+                    }
+
+                    const total = inCol.length;
+                    const shown = cat === 'done' ? rows.slice(0, 15) : rows;
+                    const today = new Date().toISOString().slice(0, 10);
                     return (
                         <div key={status} className={`col col-${cat}`}
                              onDragOver={e => e.preventDefault()}
                              onDrop={e => drop(e, status)}>
                             <div className="col-head">
                                 <span className={`jira-status jira-${cat}`}>{status}</span>
-                                <span className="count">{cards.length}</span>
+                                <span className="count">{total}</span>
                             </div>
                             <div className="col-cards">
-                                {shown.map(i => {
-                                    const today = new Date().toISOString().slice(0, 10);
+                                {shown.map(({i, kids, hidden}) => {
                                     const late = i.status_category !== 'done' && i.due_date && i.due_date < today;
-                                    const parentInCol = i.parent_key && shown.some(c => c.key === i.parent_key);
+                                    const parentVisible = i.parent_key && topKeys.has(i.parent_key);
                                     return (
                                         <div key={i.key}
                                              className={`jcard ${i.parent_key ? 'jcard-sub' : ''} ${moving === i.key ? 'jcard-moving' : ''}`}
@@ -289,8 +316,16 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                              onDoubleClick={() => OpenURL(i.url)}
                                              title={`${i.parent_key ? `상위: ${i.parent_key} ${i.parent_summary}\n` : ''}더블클릭: Jira에서 열기 / 드래그: 상태 변경`}>
                                             <div className="jcard-top">
+                                                {kids > 0 && (
+                                                    <button className="jfold"
+                                                            onClick={e => { e.stopPropagation(); toggle(i.key); }}
+                                                            title={collapsed.has(i.key) ? '하위 이슈 펼치기' : '하위 이슈 접기'}>
+                                                        {collapsed.has(i.key) ? '▸' : '▾'}
+                                                    </button>
+                                                )}
                                                 <span className="jira-key">{i.key}</span>
-                                                {i.parent_key && !parentInCol &&
+                                                {hidden > 0 && <span className="jkids">하위 {hidden}</span>}
+                                                {i.parent_key && !parentVisible &&
                                                     <span className="jparent" title={i.parent_summary}>↳ {i.parent_key}</span>}
                                                 {i.priority && <span className={`jprio jprio-${i.priority.toLowerCase()}`}>{i.priority}</span>}
                                             </div>
@@ -302,8 +337,8 @@ function JiraBoard({issues, projectKey, onBack}: { issues: JiraIssue[]; projectK
                                         </div>
                                     );
                                 })}
-                                {cat === 'done' && cards.length > 15 &&
-                                    <div className="empty" style={{padding: '8px'}}>+{cards.length - 15}건 더 (최근 15건만 표시)</div>}
+                                {cat === 'done' && rows.length > 15 &&
+                                    <div className="empty" style={{padding: '8px'}}>+{rows.length - 15}건 더 (최근 15건만 표시)</div>}
                             </div>
                         </div>
                     );

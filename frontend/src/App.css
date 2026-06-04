@@ -499,6 +499,18 @@ html, body, #root {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px;
     font-family: ui-monospace, SFMono-Regular, monospace;
 }
+.jfold {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 11px; padding: 0 2px; line-height: 1;
+    transition: color 0.15s;
+}
+.jfold:hover { color: var(--accent); }
+.jkids {
+    font-size: 9.5px; color: var(--accent);
+    background: rgba(108, 182, 255, 0.12);
+    border: 1px solid rgba(108, 182, 255, 0.3);
+    border-radius: 8px; padding: 1px 7px;
+}
 
 .jprio { font-size: 9.5px; border-radius: 4px; padding: 1px 5px; border: 1px solid var(--stroke); color: var(--muted); }
 .jprio-highest, .jprio-high { color: var(--red); border-color: rgba(248, 113, 113, 0.4); }
