@@ -101,7 +101,12 @@ html, body, #root {
 .chip:hover { background: var(--glass-hover); transform: translateY(-1px); }
 .chip-value { font-weight: 700; font-size: 14px; }
 .chip-label { color: var(--muted); font-size: 10px; }
-.fetched { color: var(--muted); font-size: 11px; }
+.fetched {
+    color: var(--muted); font-size: 11px;
+    /* 숫자 길이가 변해도 왼쪽 칩들이 밀리지 않도록 고정 폭 + 고정폭 숫자 */
+    display: inline-block; width: 170px; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
 
 /* ---- Tabs ---- */
 .tabs {
