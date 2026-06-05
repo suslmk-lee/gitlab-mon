@@ -1,4 +1,4 @@
-import {useEffect, useMemo, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
 import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
@@ -1135,6 +1135,9 @@ function App() {
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
     const [, setTick] = useState(0);
+    // 갱신으로 새로 들어온 이벤트 ID (등장 애니메이션 대상)
+    const prevEventIds = useRef<Set<number> | null>(null);
+    const [freshIds, setFreshIds] = useState<Set<number>>(new Set());
 
     // Go nil-slice → JSON null 방어 + 초기 zero-value 스냅샷 무시
     const normalize = (s: any): Snapshot => ({
@@ -1167,6 +1170,30 @@ function App() {
         const t = setInterval(() => setTick(n => n + 1), 30_000); // re-render for relative times
         return () => { off(); offT(); offP(); clearInterval(t); };
     }, []);
+
+    useEffect(() => {
+        if (!snap) return;
+        const prev = prevEventIds.current;
+        const cur = new Set(snap.events.map(e => e.id));
+        prevEventIds.current = cur;
+        if (!prev) return; // 첫 스냅샷은 기준선만 (등장 애니메이션 없음)
+        const fresh = new Set(snap.events.filter(e => !prev.has(e.id)).map(e => e.id));
+        if (fresh.size === 0) return;
+        setFreshIds(fresh);
+        const clear = setTimeout(() => setFreshIds(new Set()), 3500);
+        return () => clearTimeout(clear);
+    }, [snap?.events]);
+
+    // 새 이벤트 스태거 딜레이 (피드 표시 순서 기준, 최대 8단계)
+    const freshDelay = useMemo(() => {
+        const m = new Map<number, string>();
+        if (!snap || freshIds.size === 0) return m;
+        let i = 0;
+        for (const e of snap.events) {
+            if (freshIds.has(e.id)) m.set(e.id, `${Math.min(i++, 8) * 70}ms`);
+        }
+        return m;
+    }, [snap, freshIds]);
 
     const events = useMemo(() => {
         if (!snap) return [];
@@ -1271,8 +1298,11 @@ function App() {
                     <div className="scroll">
                         {events.map(e => {
                             const k = eventKind(e);
+                            const isNew = freshIds.has(e.id);
                             return (
-                                <div key={e.id} className={`event event-${k}`}>
+                                <div key={e.id}
+                                     className={`event event-${k}${isNew ? ' event-new' : ''}`}
+                                     style={isNew ? {animationDelay: freshDelay.get(e.id)} : undefined}>
                                     <span className={`badge badge-${k}`}>{KIND_META[k].icon}</span>
                                     <div className="event-body">
                                         <div className="event-top">
