@@ -73,14 +73,19 @@ html, body, #root {
     flex-wrap: nowrap; /* 상단바는 항상 한 줄 */
     --wails-draggable: drag;
 }
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; }
+.brand .dot { flex-shrink: 0; }
 .brand h1 {
     font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -0.2px;
     background: linear-gradient(90deg, #fff, #9ec9ff);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
 }
-.instance { color: var(--accent); cursor: pointer; --wails-draggable: no-drag; }
+.instance {
+    color: var(--accent); cursor: pointer; --wails-draggable: no-drag;
+    /* 좁은 창에서는 주소만 말줄임 (점/제목은 그대로) */
+    overflow: hidden; text-overflow: ellipsis; max-width: 220px; min-width: 0;
+}
 .instance:hover { text-decoration: underline; }
 .version { color: var(--muted); font-size: 11px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; }
