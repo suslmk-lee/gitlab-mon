@@ -101,6 +101,19 @@ html, body, #root {
 .chip:hover { background: var(--glass-hover); transform: translateY(-1px); }
 .chip-value { font-weight: 700; font-size: 14px; }
 .chip-label { color: var(--muted); font-size: 10px; }
+/* 새로고침: 상태 칩과 구분되는 액션 버튼 (칩과 동일 높이) */
+.refresh-btn {
+    height: 42px; padding: 0 16px;
+    background: linear-gradient(135deg, rgba(31, 111, 235, 0.85), rgba(88, 166, 255, 0.75));
+    color: #fff; font-size: 12px; font-weight: 600;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px; cursor: pointer;
+    box-shadow: 0 4px 14px rgba(88, 166, 255, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    transition: all 0.2s;
+}
+.refresh-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.refresh-btn:active { transform: translateY(0); }
+
 .fetched {
     color: var(--muted); font-size: 11px;
     /* 한 줄 고정 + 우측 정렬된 좁은 고정 폭: 숫자 자릿수가 변해도 칩이 밀리지 않음 */

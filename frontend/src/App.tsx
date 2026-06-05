@@ -1241,7 +1241,7 @@ function App() {
                         <StatChip label="사용자(활성)" value={`${snap.stats.users} (${snap.stats.active_users})`}/>
                         <StatChip label="열린 MR" value={String(snap.open_mrs.length)}/>
                     </>}
-                    <button className="btn btn-sm" onClick={() => Refresh()}>↻ 새로고침</button>
+                    <button className="refresh-btn" onClick={() => Refresh()}>↻ 새로고침</button>
                     {progress
                         ? <span className="fetched">{progress.phase} 수집 {progress.done}/{progress.total}</span>
                         : <LastUpdated ts={snap.fetched_at}/>}
