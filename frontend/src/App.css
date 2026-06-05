@@ -70,10 +70,10 @@ html, body, #root {
     backdrop-filter: blur(24px) saturate(1.6);
     -webkit-backdrop-filter: blur(24px) saturate(1.6);
     border-bottom: 1px solid var(--stroke);
-    flex-wrap: wrap;
+    flex-wrap: nowrap; /* 상단바는 항상 한 줄 */
     --wails-draggable: drag;
 }
-.brand { display: flex; align-items: center; gap: 10px; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden; }
 .brand h1 {
     font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -0.2px;
     background: linear-gradient(90deg, #fff, #9ec9ff);
@@ -87,7 +87,7 @@ html, body, #root {
 .dot-green { background: var(--green); box-shadow: 0 0 10px var(--green), 0 0 20px rgba(74, 222, 128, 0.4); }
 .dot-red { background: var(--red); box-shadow: 0 0 10px var(--red); }
 
-.chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; --wails-draggable: no-drag; }
+.chips { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex-shrink: 0; --wails-draggable: no-drag; }
 .chip {
     display: flex; flex-direction: column; align-items: center;
     background: var(--glass);
@@ -103,9 +103,9 @@ html, body, #root {
 .chip-label { color: var(--muted); font-size: 10px; }
 .fetched {
     color: var(--muted); font-size: 11px;
-    /* 숫자 길이가 변해도 왼쪽 칩들이 밀리지 않도록 고정 폭 + 고정폭 숫자 */
-    display: inline-block; width: 170px; white-space: nowrap;
-    font-variant-numeric: tabular-nums;
+    /* 한 줄 고정 + 우측 정렬된 좁은 고정 폭: 숫자 자릿수가 변해도 칩이 밀리지 않음 */
+    display: inline-block; width: 104px; text-align: right;
+    white-space: nowrap; font-variant-numeric: tabular-nums;
 }
 
 /* ---- Tabs ---- */

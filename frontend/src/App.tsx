@@ -184,7 +184,7 @@ function LastUpdated({ts}: { ts: string }) {
     }, []);
     const s = Math.max(0, Math.floor((Date.now() - new Date(ts).getTime()) / 1000));
     const txt = s < 60 ? `${s}초 전` : s < 3600 ? `${Math.floor(s / 60)}분 ${s % 60}초 전` : timeAgo(ts);
-    return <span className="fetched" title="30초 주기로 자동 갱신됩니다">{txt} 갱신 · 30s 주기</span>;
+    return <span className="fetched" title="30초 주기로 자동 갱신됩니다">{txt} 갱신</span>;
 }
 
 function SetupView({onSaved}: { onSaved: () => void }) {
