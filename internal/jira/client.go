@@ -3,9 +3,11 @@ package jira
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -233,7 +235,7 @@ func (c *Client) GetIssue(key string) (Issue, error) {
 	return c.normalize(r), nil
 }
 
-// GetIssueDescription fetches an issue's description as plain text
+// GetIssueDescription fetches an issue's description rendered as HTML
 // (Jira Cloud stores it as ADF — Atlassian Document Format).
 func (c *Client) GetIssueDescription(key string) (string, error) {
 	q := url.Values{}
@@ -246,51 +248,169 @@ func (c *Client) GetIssueDescription(key string) (string, error) {
 	if err := c.get("/rest/api/3/issue/"+key, q, &resp); err != nil {
 		return "", err
 	}
-	return adfToText(resp.Fields.Description), nil
+	return adfToHTML(resp.Fields.Description), nil
 }
 
-// adfToText flattens an ADF document into readable plain text.
-func adfToText(raw json.RawMessage) string {
+type adfNode struct {
+	Type    string         `json:"type"`
+	Text    string         `json:"text"`
+	Content []adfNode      `json:"content"`
+	Attrs   map[string]any `json:"attrs"`
+	Marks   []struct {
+		Type  string         `json:"type"`
+		Attrs map[string]any `json:"attrs"`
+	} `json:"marks"`
+}
+
+// adfToHTML renders an ADF document to safe HTML — all text is escaped and
+// tags are generated only by this converter.
+func adfToHTML(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
 	}
-	type node struct {
-		Type    string          `json:"type"`
-		Text    string          `json:"text"`
-		Content []node          `json:"content"`
-		Attrs   json.RawMessage `json:"attrs"`
-	}
-	var root node
+	var root adfNode
 	if json.Unmarshal(raw, &root) != nil {
 		return ""
 	}
 	var sb strings.Builder
-	var walk func(n node, depth int)
-	walk = func(n node, depth int) {
-		switch n.Type {
-		case "text":
-			sb.WriteString(n.Text)
-		case "hardBreak":
-			sb.WriteString("\n")
-		case "listItem":
-			sb.WriteString(strings.Repeat("  ", depth) + "• ")
-		case "rule":
-			sb.WriteString("\n———\n")
-		}
-		nextDepth := depth
-		if n.Type == "bulletList" || n.Type == "orderedList" {
-			nextDepth++
-		}
-		for _, ch := range n.Content {
-			walk(ch, nextDepth)
-		}
-		switch n.Type {
-		case "paragraph", "heading", "listItem", "codeBlock", "blockquote":
-			sb.WriteString("\n")
-		}
-	}
-	walk(root, 0)
+	renderADF(&sb, root)
 	return strings.TrimSpace(sb.String())
+}
+
+func adfChildren(sb *strings.Builder, n adfNode) {
+	for _, ch := range n.Content {
+		renderADF(sb, ch)
+	}
+}
+
+func renderADF(sb *strings.Builder, n adfNode) {
+	attrStr := func(k string) string {
+		if v, ok := n.Attrs[k]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+			if f, ok := v.(float64); ok {
+				return strconv.Itoa(int(f))
+			}
+		}
+		return ""
+	}
+	switch n.Type {
+	case "doc":
+		adfChildren(sb, n)
+	case "text":
+		t := html.EscapeString(n.Text)
+		// marks 적용 (안쪽부터)
+		for i := len(n.Marks) - 1; i >= 0; i-- {
+			m := n.Marks[i]
+			switch m.Type {
+			case "strong":
+				t = "<strong>" + t + "</strong>"
+			case "em":
+				t = "<em>" + t + "</em>"
+			case "code":
+				t = "<code>" + t + "</code>"
+			case "strike":
+				t = "<s>" + t + "</s>"
+			case "underline":
+				t = "<u>" + t + "</u>"
+			case "link":
+				href := ""
+				if h, ok := m.Attrs["href"].(string); ok {
+					href = h
+				}
+				t = `<a href="` + html.EscapeString(href) + `">` + t + `</a>`
+			}
+		}
+		sb.WriteString(t)
+	case "paragraph":
+		sb.WriteString("<p>")
+		adfChildren(sb, n)
+		sb.WriteString("</p>")
+	case "heading":
+		lv := attrStr("level")
+		if lv == "" || lv < "1" || lv > "6" {
+			lv = "3"
+		}
+		sb.WriteString("<h" + lv + ">")
+		adfChildren(sb, n)
+		sb.WriteString("</h" + lv + ">")
+	case "bulletList":
+		sb.WriteString("<ul>")
+		adfChildren(sb, n)
+		sb.WriteString("</ul>")
+	case "orderedList":
+		sb.WriteString("<ol>")
+		adfChildren(sb, n)
+		sb.WriteString("</ol>")
+	case "listItem":
+		sb.WriteString("<li>")
+		adfChildren(sb, n)
+		sb.WriteString("</li>")
+	case "taskList":
+		sb.WriteString(`<ul class="adf-tasks">`)
+		adfChildren(sb, n)
+		sb.WriteString("</ul>")
+	case "taskItem":
+		box := "☐"
+		if attrStr("state") == "DONE" {
+			box = "☑"
+		}
+		sb.WriteString("<li>" + box + " ")
+		adfChildren(sb, n)
+		sb.WriteString("</li>")
+	case "codeBlock":
+		sb.WriteString("<pre><code>")
+		adfChildren(sb, n)
+		sb.WriteString("</code></pre>")
+	case "blockquote":
+		sb.WriteString("<blockquote>")
+		adfChildren(sb, n)
+		sb.WriteString("</blockquote>")
+	case "panel":
+		sb.WriteString(`<div class="adf-panel adf-panel-` + html.EscapeString(attrStr("panelType")) + `">`)
+		adfChildren(sb, n)
+		sb.WriteString("</div>")
+	case "rule":
+		sb.WriteString("<hr>")
+	case "hardBreak":
+		sb.WriteString("<br>")
+	case "table":
+		sb.WriteString("<table>")
+		adfChildren(sb, n)
+		sb.WriteString("</table>")
+	case "tableRow":
+		sb.WriteString("<tr>")
+		adfChildren(sb, n)
+		sb.WriteString("</tr>")
+	case "tableHeader":
+		sb.WriteString("<th>")
+		adfChildren(sb, n)
+		sb.WriteString("</th>")
+	case "tableCell":
+		sb.WriteString("<td>")
+		adfChildren(sb, n)
+		sb.WriteString("</td>")
+	case "mention":
+		sb.WriteString(`<span class="adf-mention">` + html.EscapeString(attrStr("text")) + `</span>`)
+	case "emoji":
+		sb.WriteString(html.EscapeString(attrStr("text")))
+	case "inlineCard":
+		u := attrStr("url")
+		sb.WriteString(`<a href="` + html.EscapeString(u) + `">` + html.EscapeString(u) + `</a>`)
+	case "date":
+		if ts := attrStr("timestamp"); ts != "" {
+			if ms, err := strconv.ParseInt(ts, 10, 64); err == nil {
+				sb.WriteString(time.UnixMilli(ms).Format("2006-01-02"))
+			}
+		}
+	case "mediaSingle", "mediaGroup":
+		sb.WriteString(`<em class="adf-media">[첨부 이미지/파일]</em>`)
+	case "status":
+		sb.WriteString(`<span class="adf-status">` + html.EscapeString(attrStr("text")) + `</span>`)
+	default:
+		adfChildren(sb, n)
+	}
 }
 
 // SearchIssues runs a JQL query, following nextPageToken pagination,

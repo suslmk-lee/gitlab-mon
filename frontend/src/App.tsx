@@ -293,7 +293,13 @@ function IssueModal({issueKey, issues, onClose, onSelect}: {
                 {detail?.description && (
                     <div className="modal-section">
                         <h4>설명</h4>
-                        <pre className="modal-desc">{detail.description}</pre>
+                        <div className="modal-desc adf"
+                             onClick={e => {
+                                 // 링크는 webview 이탈 대신 외부 브라우저로
+                                 const a = (e.target as HTMLElement).closest('a');
+                                 if (a) { e.preventDefault(); a.href && OpenURL(a.href); }
+                             }}
+                             dangerouslySetInnerHTML={{__html: detail.description}}/>
                     </div>
                 )}
 
