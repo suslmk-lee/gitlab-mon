@@ -459,7 +459,10 @@ html, body, #root {
 
 .board { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; flex: 1; min-height: 0; }
 .col {
-    min-width: 250px; width: 250px; flex-shrink: 0;
+    /* 4개 컬럼이 보드 폭을 가득 채우는 너비 (5개 이상이면 가로 스크롤) */
+    flex: 1 0 auto;
+    min-width: calc((100% - 3 * 12px) / 4);
+    max-width: calc((100% - 3 * 12px) / 4);
     background: var(--glass);
     backdrop-filter: blur(24px) saturate(1.5);
     -webkit-backdrop-filter: blur(24px) saturate(1.5);
