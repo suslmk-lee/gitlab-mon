@@ -94,6 +94,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     other: <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>,                                              // activity
     repo: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>, // folder
     external: <><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>, // external-link
+    bot: <><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></>, // bot
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -163,7 +164,12 @@ function eventScore(e: GLEvent, w: Weights): number {
 
 function authorLabel(a: Author | undefined): string {
     if (!a) return '?';
-    return (a.is_bot ? '🤖 ' : '') + (a.name || a.username);
+    return a.name || a.username;
+}
+
+// 이름 앞에 봇 아이콘(봇 계정일 때)을 붙여 렌더
+function AuthorName({a}: { a: Author | undefined }) {
+    return <>{a?.is_bot && <Icon name="bot" size={13} className="bot-ico"/>}{authorLabel(a)}</>;
 }
 
 // ---- Per-user aggregation ----
@@ -1029,7 +1035,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 {top.map((u, i) => (
                     <div key={u.username} className="lb-row">
                         <span className="lb-rank">{i + 1}</span>
-                        <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.name}</span>
+                        <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}{u.name}</span>
                         <div className="lb-bar-wrap">
                             <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
                         </div>
@@ -1046,7 +1052,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 <div className={`heat ${period === 90 ? 'heat-sm' : ''}`}>
                     {top.map(u => (
                         <div key={u.username} className="heat-row">
-                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.name}</span>
+                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={12} className="bot-ico"/>}{u.name}</span>
                             {days.map(d => {
                                 const v = u.byDay.get(d) ?? 0;
                                 return <span key={d} className={`cell cell-${level(v)}`} title={`${u.name} · ${d} · ${Math.round(v)}점`}/>;
@@ -1352,7 +1358,7 @@ function App() {
                                     <span className={`badge badge-${k}`}><Icon name={k} size={15}/></span>
                                     <div className="event-body">
                                         <div className="event-top">
-                                            <b>{authorLabel(e.author)}</b>
+                                            <b><AuthorName a={e.author}/></b>
                                             <a className="proj" onClick={() => e.project_url && OpenURL(e.project_url)}>
                                                 {e.project_path || `project #${e.project_id}`}
                                             </a>
