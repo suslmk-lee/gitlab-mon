@@ -413,6 +413,44 @@ func renderADF(sb *strings.Builder, n adfNode) {
 	}
 }
 
+// Comment is one issue comment with body rendered as HTML.
+type Comment struct {
+	Author   string    `json:"author"`
+	Created  time.Time `json:"created"`
+	Updated  time.Time `json:"updated"`
+	BodyHTML string    `json:"body_html"`
+}
+
+// GetComments returns an issue's comments, oldest first.
+func (c *Client) GetComments(key string) ([]Comment, error) {
+	q := url.Values{}
+	q.Set("maxResults", "100")
+	q.Set("orderBy", "created")
+	var resp struct {
+		Comments []struct {
+			Author struct {
+				DisplayName string `json:"displayName"`
+			} `json:"author"`
+			Created jiraTime        `json:"created"`
+			Updated jiraTime        `json:"updated"`
+			Body    json.RawMessage `json:"body"`
+		} `json:"comments"`
+	}
+	if err := c.get("/rest/api/3/issue/"+key+"/comment", q, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]Comment, 0, len(resp.Comments))
+	for _, cm := range resp.Comments {
+		out = append(out, Comment{
+			Author:   cm.Author.DisplayName,
+			Created:  cm.Created.Time,
+			Updated:  cm.Updated.Time,
+			BodyHTML: adfToHTML(cm.Body),
+		})
+	}
+	return out, nil
+}
+
 // SearchIssues runs a JQL query, following nextPageToken pagination,
 // up to maxPages*100 issues.
 func (c *Client) SearchIssues(jql string, maxPages int) ([]Issue, error) {

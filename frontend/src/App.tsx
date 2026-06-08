@@ -219,7 +219,7 @@ function IssueModal({issueKey, issues, onClose, onSelect}: {
     issueKey: string; issues: JiraIssue[]; onClose: () => void; onSelect: (k: string) => void;
 }) {
     const issue = issues.find(i => i.key === issueKey);
-    const [detail, setDetail] = useState<{description: string; transitions: JiraTransition[]; error: string} | null>(null);
+    const [detail, setDetail] = useState<{description: string; transitions: JiraTransition[]; comments: {author: string; created: string; updated: string; body_html: string}[]; error: string} | null>(null);
     const [busy, setBusy] = useState(false);
     const [err, setErr] = useState('');
 
@@ -313,6 +313,28 @@ function IssueModal({issueKey, issues, onClose, onSelect}: {
                                 <span className="jghost-sum">{k.summary}</span>
                             </div>
                         ))}
+                    </div>
+                )}
+
+                {detail && detail.comments && detail.comments.length > 0 && (
+                    <div className="modal-section">
+                        <h4>댓글 <span className="count">{detail.comments.length}</span></h4>
+                        <div className="modal-comments">
+                            {detail.comments.map((c, idx) => (
+                                <div key={idx} className="jcomment">
+                                    <div className="jcomment-head">
+                                        <b>{c.author}</b>
+                                        <span className="time">{timeAgo(c.created)}</span>
+                                    </div>
+                                    <div className="adf jcomment-body"
+                                         onClick={e => {
+                                             const a = (e.target as HTMLElement).closest('a');
+                                             if (a) { e.preventDefault(); a.href && OpenURL(a.href); }
+                                         }}
+                                         dangerouslySetInnerHTML={{__html: c.body_html}}/>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 )}
 

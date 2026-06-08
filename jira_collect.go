@@ -138,6 +138,7 @@ func (a *App) JiraMove(key, targetStatus string) string {
 type JiraIssueDetail struct {
 	Description string            `json:"description"`
 	Transitions []jira.Transition `json:"transitions"`
+	Comments    []jira.Comment    `json:"comments"`
 	Error       string            `json:"error"`
 }
 
@@ -159,6 +160,9 @@ func (a *App) JiraDetail(key string) JiraIssueDetail {
 	out.Description = desc
 	if trs, err := jc.GetTransitions(key); err == nil {
 		out.Transitions = trs
+	}
+	if cmts, err := jc.GetComments(key); err == nil {
+		out.Comments = cmts
 	}
 	return out
 }

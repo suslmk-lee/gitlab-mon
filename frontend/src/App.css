@@ -705,6 +705,17 @@ html, body, #root {
 .adf .adf-panel-error { background: rgba(248, 113, 113, 0.07); border-color: rgba(248, 113, 113, 0.3); }
 .adf .adf-panel-success { background: rgba(74, 222, 128, 0.07); border-color: rgba(74, 222, 128, 0.3); }
 .adf .adf-media { color: var(--muted); font-size: 11px; }
+.modal-comments { display: flex; flex-direction: column; gap: 10px; }
+.jcomment {
+    background: rgba(0, 0, 0, 0.2); border: 1px solid var(--stroke);
+    border-radius: 10px; padding: 9px 13px;
+}
+.jcomment-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.jcomment-head b { font-size: 12px; }
+.jcomment-body { font-size: 12.5px; line-height: 1.55; user-select: text; }
+.jcomment-body p:first-child { margin-top: 0; }
+.jcomment-body p:last-child { margin-bottom: 0; }
+
 .modal-foot { display: flex; justify-content: flex-end; }
 .modal .jchild { font-size: 12px; padding: 5px 4px; }
 .modal .jchild .jira-status { font-size: 10px; min-width: 52px; }

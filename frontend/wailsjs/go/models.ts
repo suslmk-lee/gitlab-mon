@@ -290,6 +290,44 @@ export namespace gitlab {
 
 export namespace jira {
 	
+	export class Comment {
+	    author: string;
+	    // Go type: time
+	    created: any;
+	    // Go type: time
+	    updated: any;
+	    body_html: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Comment(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.author = source["author"];
+	        this.created = this.convertValues(source["created"], null);
+	        this.updated = this.convertValues(source["updated"], null);
+	        this.body_html = source["body_html"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Issue {
 	    key: string;
 	    summary: string;
@@ -400,6 +438,7 @@ export namespace main {
 	export class JiraIssueDetail {
 	    description: string;
 	    transitions: jira.Transition[];
+	    comments: jira.Comment[];
 	    error: string;
 	
 	    static createFrom(source: any = {}) {
@@ -410,6 +449,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.description = source["description"];
 	        this.transitions = this.convertValues(source["transitions"], jira.Transition);
+	        this.comments = this.convertValues(source["comments"], jira.Comment);
 	        this.error = source["error"];
 	    }
 	
