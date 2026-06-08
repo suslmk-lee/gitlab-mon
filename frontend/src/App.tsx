@@ -1186,6 +1186,7 @@ function App() {
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
+    const [showBots, setShowBots] = useState(false); // 토큰봇 활동 표시 (기본 숨김)
     const [, setTick] = useState(0);
     // 갱신으로 새로 들어온 이벤트 ID (등장 애니메이션 대상)
     const prevEventIds = useRef<Set<number> | null>(null);
@@ -1253,6 +1254,7 @@ function App() {
         const cut = periodCutoff(period);
         return snap.events.filter(e => {
             if (new Date(e.created_at).getTime() < cut) return false;
+            if (!showBots && e.author?.is_bot) return false;
             if (kinds.size > 0 && !kinds.has(eventKind(e))) return false;
             if (!q) return true;
             return (e.author?.username || '').toLowerCase().includes(q)
@@ -1261,7 +1263,7 @@ function App() {
                 || (e.target_title || '').toLowerCase().includes(q)
                 || (e.push_data?.ref || '').toLowerCase().includes(q);
         }).slice(0, FEED_LIMIT);
-    }, [snap, filter, kinds, period]);
+    }, [snap, filter, kinds, period, showBots]);
 
     // 통계/CI 화면에서 사용자·레포 클릭 → 피드 탭으로 이동해 필터 적용
     const drill = (q: string) => {
@@ -1343,6 +1345,11 @@ function App() {
                                     <Icon name={k} size={12}/> {KIND_META[k].label}
                                 </button>
                             ))}
+                            <button className={`pill pill-bot ${showBots ? 'pill-on' : ''}`}
+                                    title="CI/토큰봇 활동 표시"
+                                    onClick={() => setShowBots(v => !v)}>
+                                <Icon name="bot" size={12}/> 봇
+                            </button>
                             <input className="search" placeholder="사용자 / 레포 / 브랜치 검색"
                                    value={filter} onChange={e => setFilter(e.target.value)}/>
                         </div>
