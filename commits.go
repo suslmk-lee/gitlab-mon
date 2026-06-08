@@ -88,8 +88,9 @@ func (a *App) collectCommits(client *gitlab.Client, projects []gitlab.Project, s
 		switch {
 		case !ok:
 			jobs = append(jobs, job{p, since}) // 첫 수집: 윈도우 전체
-		case p.LastActivityAt.After(c.LastActivity):
+		case p.LastActivityAt.After(c.LastActivity) || recentlyActive(p):
 			// 증분: 캐시된 최신 커밋 이후만 (1시간 오버랩, SHA로 dedupe)
+			// 최근 활동 프로젝트는 last_activity_at 미갱신 대비 매 사이클 재확인
 			after := since
 			if len(c.Commits) > 0 && c.Commits[0].CreatedAt.After(after) {
 				after = c.Commits[0].CreatedAt.Add(-1 * time.Hour)

@@ -28,7 +28,15 @@ const (
 	statsWindow    = statsWindowDay * 24 * time.Hour // event/pipeline history kept
 	maxFetchPages  = 30                              // per project, per fetch (×100 events)
 	fetchWorkers   = 6                               // concurrent project-event fetches
+	// GitLab의 last_activity_at은 모든 push에 갱신되지 않으므로(알려진 동작),
+	// 최근 활동한 프로젝트는 그 값 변화와 무관하게 매 사이클 증분 재확인한다.
+	recentHorizon = 3 * 24 * time.Hour
 )
+
+// recentlyActive는 프로젝트가 last_activity_at 기준 최근 활동 윈도우 안인지 본다.
+func recentlyActive(p gitlab.Project) bool {
+	return time.Since(p.LastActivityAt) < recentHorizon
+}
 
 // pipeLive marks pipeline statuses that can still transition — these are the
 // only ones worth polling every cycle.
@@ -551,7 +559,7 @@ func (a *App) collectEvents(client *gitlab.Client, projects []gitlab.Project, si
 		}
 		active[p.ID] = true
 		c, ok := a.cache[p.ID]
-		if !ok || p.LastActivityAt.After(c.LastActivity) {
+		if !ok || p.LastActivityAt.After(c.LastActivity) || recentlyActive(p) {
 			jobs = append(jobs, p)
 		}
 	}
@@ -648,6 +656,9 @@ func (a *App) collectPipelines(client *gitlab.Client, projects []gitlab.Project,
 			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
 		case p.LastActivityAt.After(c.LastActivity):
 			jobs = append(jobs, job{p, since}) // CI may have been enabled since
+		case recentlyActive(p) && c.HasCI:
+			// 최근 활동 프로젝트는 last_activity_at 미갱신 대비 매 사이클 재확인
+			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
 		case hasLivePipeline(c):
 			// 실행 중인 파이프라인의 상태 전이 추적
 			jobs = append(jobs, job{p, c.LastFetch.Add(-10 * time.Minute)})
