@@ -85,12 +85,33 @@ function eventKind(e: GLEvent): Kind {
     return 'other';
 }
 
-const KIND_META: Record<Kind, { label: string; icon: string; color: string }> = {
-    push:    {label: 'Push',  icon: '⬆', color: 'var(--green)'},
-    merge:   {label: 'Merge', icon: '⛙', color: 'var(--purple)'},
-    mr:      {label: 'MR',    icon: '⎇', color: 'var(--accent)'},
-    comment: {label: '댓글',   icon: '💬', color: 'var(--orange)'},
-    other:   {label: '기타',   icon: '•', color: 'var(--muted)'},
+// Lucide 아이콘(ISC 라이선스, 출처표기 불필요)을 인라인 SVG로 — 외부 의존성 없음
+const ICON_PATHS: Record<string, JSX.Element> = {
+    push: <><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></>,                                  // arrow-up
+    merge: <><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></>, // git-merge
+    mr: <><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/></>, // git-pull-request
+    comment: <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/>,                                        // message-circle
+    other: <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>,                                              // activity
+    repo: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>, // folder
+    external: <><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>, // external-link
+};
+
+function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
+    return (
+        <svg className={`icon${className ? ' ' + className : ''}`} width={size} height={size}
+             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {ICON_PATHS[name]}
+        </svg>
+    );
+}
+
+const KIND_META: Record<Kind, { label: string; color: string }> = {
+    push:    {label: 'Push',  color: 'var(--green)'},
+    merge:   {label: 'Merge', color: 'var(--purple)'},
+    mr:      {label: 'MR',    color: 'var(--accent)'},
+    comment: {label: '댓글',   color: 'var(--orange)'},
+    other:   {label: '기타',   color: 'var(--muted)'},
 };
 const KINDS = Object.keys(KIND_META) as Kind[];
 
@@ -1313,7 +1334,7 @@ function App() {
                                 <button key={k}
                                         className={`pill ${kinds.has(k) ? 'pill-on' : ''} pill-${k}`}
                                         onClick={() => toggleKind(k)}>
-                                    {KIND_META[k].icon} {KIND_META[k].label}
+                                    <Icon name={k} size={12}/> {KIND_META[k].label}
                                 </button>
                             ))}
                             <input className="search" placeholder="사용자 / 레포 / 브랜치 검색"
@@ -1328,7 +1349,7 @@ function App() {
                                 <div key={e.id}
                                      className={`event event-${k}${isNew ? ' event-new' : ''}`}
                                      style={isNew ? {animationDelay: freshDelay.get(e.id)} : undefined}>
-                                    <span className={`badge badge-${k}`}>{KIND_META[k].icon}</span>
+                                    <span className={`badge badge-${k}`}><Icon name={k} size={15}/></span>
                                     <div className="event-body">
                                         <div className="event-top">
                                             <b>{authorLabel(e.author)}</b>
@@ -1352,10 +1373,13 @@ function App() {
                         <div className="scroll">
                             {snap.open_mrs.map(mr => (
                                 <div key={mr.id} className="mr" onClick={() => OpenURL(mr.web_url)}>
-                                    <div className="mr-title">{mr.draft && <span className="draft">Draft</span>}!{mr.iid} {mr.title}</div>
-                                    <div className="mr-meta">
-                                        <span>{mr.project_path}</span>
-                                        <span>{mr.author?.username} · {timeAgo(mr.updated_at)}</span>
+                                    <span className="mr-icon"><Icon name="mr" size={15}/></span>
+                                    <div className="mr-body">
+                                        <div className="mr-title">{mr.draft && <span className="draft">Draft</span>}!{mr.iid} {mr.title}</div>
+                                        <div className="mr-meta">
+                                            <span>{mr.project_path}</span>
+                                            <span>{mr.author?.username} · {timeAgo(mr.updated_at)}</span>
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -1367,7 +1391,7 @@ function App() {
                         <div className="scroll">
                             {snap.projects.slice(0, 30).map(p => (
                                 <div key={p.id} className="repo" onClick={() => OpenURL(p.web_url)}>
-                                    <span className="repo-name">{p.path_with_namespace}</span>
+                                    <span className="repo-name"><Icon name="repo" size={14} className="repo-ico"/>{p.path_with_namespace}</span>
                                     <span className="time">{timeAgo(p.last_activity_at)}</span>
                                 </div>
                             ))}
