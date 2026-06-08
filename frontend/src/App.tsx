@@ -78,6 +78,7 @@ type Kind = 'push' | 'merge' | 'mr' | 'comment' | 'other';
 function eventKind(e: GLEvent): Kind {
     const a = e.action_name;
     if (a.startsWith('pushed')) return 'push';
+    if (e.push_data) return 'push'; // 브랜치/태그 생성·삭제 등도 push_data 보유
     if (a === 'accepted') return 'merge';
     if (e.target_type === 'MergeRequest') return 'mr';
     if (a.startsWith('commented')) return 'comment';
@@ -96,11 +97,13 @@ const KINDS = Object.keys(KIND_META) as Kind[];
 function describeEvent(e: GLEvent): string {
     const k = eventKind(e);
     if (k === 'push' && e.push_data) {
-        const n = e.push_data.commit_count;
-        if (e.push_data.action === 'created') return `브랜치 생성 ${e.push_data.ref}`;
-        if (e.push_data.action === 'removed') return `브랜치 삭제 ${e.push_data.ref}`;
-        return `${e.push_data.ref} 에 ${n}개 커밋 push${e.push_data.commit_title ? ` — ${e.push_data.commit_title}` : ''}`;
+        const pd = e.push_data;
+        const what = pd.ref_type === 'tag' ? '태그' : '브랜치';
+        if (pd.action === 'created') return `${what} 생성: ${pd.ref}`;
+        if (pd.action === 'removed') return `${what} 삭제: ${pd.ref}`;
+        return `${pd.ref} 에 ${pd.commit_count}개 커밋 push${pd.commit_title ? ` — ${pd.commit_title}` : ''}`;
     }
+    if (e.action_name === 'deleted') return `${e.target_type || '항목'} 삭제${e.target_title ? `: ${e.target_title}` : ''}`;
     if (k === 'merge') return `MR !${e.target_iid} 머지: ${e.target_title}`;
     if (k === 'mr') return `MR !${e.target_iid} ${e.action_name === 'opened' ? '생성' : e.action_name}: ${e.target_title}`;
     if (k === 'comment') return `댓글: ${e.target_title || ''}`;
