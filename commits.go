@@ -16,6 +16,7 @@ type commitStat struct {
 	SHA         string    `json:"sha"`
 	AuthorName  string    `json:"author_name"`
 	AuthorEmail string    `json:"author_email"`
+	Title       string    `json:"title"`
 	CreatedAt   time.Time `json:"created_at"`
 	Add         int       `json:"add"`
 	Del         int       `json:"del"`
@@ -27,7 +28,10 @@ type projCommits struct {
 	Commits      []commitStat `json:"commits"`
 }
 
+const commitsCacheVersion = 2 // 2: 커밋 title 추가
+
 type commitsCacheFile struct {
+	Version    int                  `json:"version"`
 	WindowDays int                  `json:"window_days"`
 	Projects   map[int]*projCommits `json:"projects"`
 }
@@ -52,7 +56,7 @@ func commitsCachePath() (string, error) {
 func (a *App) loadCommitsCache() {
 	if p, err := commitsCachePath(); err == nil {
 		var f commitsCacheFile
-		if loadJSONFile(p, &f) && f.WindowDays == statsWindowDay && f.Projects != nil {
+		if loadJSONFile(p, &f) && f.Version == commitsCacheVersion && f.WindowDays == statsWindowDay && f.Projects != nil {
 			a.mu.Lock()
 			a.commitCache = f.Projects
 			a.mu.Unlock()
@@ -64,7 +68,7 @@ func (a *App) saveCommitsCache() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if p, err := commitsCachePath(); err == nil {
-		saveJSONFile(p, commitsCacheFile{WindowDays: statsWindowDay, Projects: a.commitCache})
+		saveJSONFile(p, commitsCacheFile{Version: commitsCacheVersion, WindowDays: statsWindowDay, Projects: a.commitCache})
 	}
 }
 
@@ -137,7 +141,7 @@ func (a *App) collectCommits(client *gitlab.Client, projects []gitlab.Project, s
 						continue
 					}
 					seen[cm.ID] = true
-					cs := commitStat{SHA: cm.ID, AuthorName: cm.AuthorName, AuthorEmail: cm.AuthorEmail, CreatedAt: cm.CreatedAt}
+					cs := commitStat{SHA: cm.ID, AuthorName: cm.AuthorName, AuthorEmail: cm.AuthorEmail, Title: cm.Title, CreatedAt: cm.CreatedAt}
 					if cm.Stats != nil {
 						cs.Add, cs.Del = cm.Stats.Additions, cm.Stats.Deletions
 					}
@@ -162,9 +166,9 @@ func (a *App) collectCommits(client *gitlab.Client, projects []gitlab.Project, s
 	wg.Wait()
 }
 
-// aggregateCodeDaily rolls the commit cache up to per-user-per-day rows,
-// resolving git author identities to GitLab usernames where possible.
-func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay {
+// buildUserResolver maps a git author (name/email) to a GitLab username
+// using admin user data, falling back to the git author name.
+func buildUserResolver(users []gitlab.User) func(name, email string) string {
 	byEmail := map[string]string{}
 	byName := map[string]string{}
 	for _, u := range users {
@@ -179,7 +183,7 @@ func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay
 		}
 		byName[strings.ToLower(u.Username)] = u.Username
 	}
-	resolve := func(name, email string) string {
+	return func(name, email string) string {
 		e := strings.ToLower(email)
 		if u, ok := byEmail[e]; ok {
 			return u
@@ -194,6 +198,12 @@ func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay
 		}
 		return name // 매핑 실패: git author name 그대로
 	}
+}
+
+// aggregateCodeDaily rolls the commit cache up to per-user-per-day rows,
+// resolving git author identities to GitLab usernames where possible.
+func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay {
+	resolve := buildUserResolver(users)
 
 	type key struct{ user, day string }
 	agg := map[key]*CodeDay{}

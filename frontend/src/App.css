@@ -437,6 +437,26 @@ html, body, #root {
 }
 .code-add { color: var(--green); width: 56px; }
 .code-del { color: var(--red); width: 56px; }
+
+/* ---- 주간 리포트 ---- */
+.wk-group { margin: 8px 0; }
+.wk-group b { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+.wk-item {
+    font-size: 12.5px; padding: 4px 10px; margin: 3px 0;
+    background: rgba(0, 0, 0, 0.2); border: 1px solid var(--stroke);
+    border-left-width: 3px; border-radius: 7px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wk-merge { border-left-color: var(--purple); }
+.wk-mr { border-left-color: var(--accent); }
+.wk-commit { border-left-color: var(--green); color: var(--text); }
+.code-add, .code-del { font-style: normal; }
+.ai-summary {
+    margin: 0; font-family: inherit; font-size: 13px; line-height: 1.65;
+    white-space: pre-wrap; word-break: break-word; user-select: text;
+    background: rgba(108, 182, 255, 0.06); border: 1px solid rgba(108, 182, 255, 0.25);
+    border-radius: 10px; padding: 14px 16px; color: var(--text);
+}
 .lb-score { width: 44px; text-align: right; font-weight: 700; font-size: 12px; flex-shrink: 0; }
 .lb-detail { color: var(--muted); font-size: 11px; width: 260px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

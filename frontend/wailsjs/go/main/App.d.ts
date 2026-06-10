@@ -17,3 +17,9 @@ export function Refresh():Promise<void>;
 export function SaveCSV(arg1:string,arg2:string):Promise<string>;
 
 export function SaveConfig(arg1:string,arg2:string):Promise<string>;
+
+export function SummarizeWeek(arg1:string,arg2:number):Promise<string>;
+
+export function WeeklyReport(arg1:string,arg2:number):Promise<main.WeekReport>;
+
+export function WeeklyReportUsers():Promise<Array<string>>;

@@ -141,6 +141,7 @@ type Commit struct {
 	ID          string    `json:"id"`
 	AuthorName  string    `json:"author_name"`
 	AuthorEmail string    `json:"author_email"`
+	Title       string    `json:"title"`
 	CreatedAt   time.Time `json:"created_at"`
 	Stats       *struct {
 		Additions int `json:"additions"`

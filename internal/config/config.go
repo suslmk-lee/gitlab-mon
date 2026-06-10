@@ -9,11 +9,12 @@ import (
 )
 
 type Config struct {
-	GitLabURL   string `json:"gitlab_url"`
-	GitLabToken string `json:"gitlab_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
-	JiraURL     string `json:"jira_url,omitempty"`
-	JiraEmail   string `json:"jira_email,omitempty"`
-	JiraToken   string `json:"jira_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
+	GitLabURL    string `json:"gitlab_url"`
+	GitLabToken  string `json:"gitlab_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
+	JiraURL      string `json:"jira_url,omitempty"`
+	JiraEmail    string `json:"jira_email,omitempty"`
+	JiraToken    string `json:"jira_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
+	AnthropicKey string `json:"-"`                    // AI 요약용 (env/keychain only, 디스크 미저장)
 }
 
 const defaultURL = "https://ci.quantumcns.ai"
@@ -54,6 +55,9 @@ func Load() Config {
 				cfg.JiraToken = t
 			}
 		}
+		if t, ok := keychainGet("anthropic"); ok {
+			cfg.AnthropicKey = t
+		}
 	}
 
 	// 2. env.local files
@@ -80,6 +84,9 @@ func Load() Config {
 	if v := os.Getenv("JIRA_TOKEN"); v != "" {
 		cfg.JiraToken = v
 	}
+	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
+		cfg.AnthropicKey = v
+	}
 
 	cfg.GitLabURL = strings.TrimRight(cfg.GitLabURL, "/")
 	cfg.JiraURL = strings.TrimRight(cfg.JiraURL, "/")
@@ -98,7 +105,11 @@ func Save(cfg Config) error {
 		if cfg.JiraURL != "" && cfg.JiraToken != "" && keychainSet(jiraKeychainAccount(cfg.JiraURL), cfg.JiraToken) == nil {
 			onDisk.JiraToken = ""
 		}
+		if cfg.AnthropicKey != "" {
+			_ = keychainSet("anthropic", cfg.AnthropicKey)
+		}
 	}
+	// AnthropicKey는 json:"-" 라 파일에 안 써짐
 	return writeConfigFile(onDisk)
 }
 
@@ -180,6 +191,8 @@ func applyEnvFile(path string, cfg *Config) {
 			cfg.JiraEmail = v
 		case "JIRA_TOKEN":
 			cfg.JiraToken = v
+		case "ANTHROPIC_API_KEY":
+			cfg.AnthropicKey = v
 		}
 	}
 }

@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -1176,13 +1176,160 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
     );
 }
 
+// ---- Weekly report ----
+interface WeekProjectWork {
+    path: string; web_url: string; commit_count: number; add: number; del: number;
+    commit_msgs: string[] | null; merged_mrs: string[] | null; opened_mrs: string[] | null; branches: string[] | null;
+}
+interface WeekDay { day: string; commits: number; add: number; del: number }
+interface WeekReportData {
+    username: string; week_start: string; week_end: string; week_offset: number;
+    total_commits: number; total_add: number; total_del: number;
+    merged_count: number; opened_count: number;
+    projects: WeekProjectWork[] | null; days: WeekDay[] | null;
+    has_ai_key: boolean; error: string;
+}
+
+function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
+    const [users, setUsers] = useState<string[]>([]);
+    const [user, setUser] = useState('');
+    const [offset, setOffset] = useState(1); // 1 = 지난주
+    const [rep, setRep] = useState<WeekReportData | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [summary, setSummary] = useState('');
+    const [summarizing, setSummarizing] = useState(false);
+
+    useEffect(() => { WeeklyReportUsers().then((u: string[]) => setUsers(u || [])); }, []);
+
+    useEffect(() => {
+        if (!user) { setRep(null); return; }
+        setLoading(true);
+        setSummary('');
+        WeeklyReport(user, offset).then((r: any) => { setRep(r); setLoading(false); });
+    }, [user, offset]);
+
+    const runSummary = async () => {
+        setSummarizing(true);
+        const r = await SummarizeWeek(user, offset);
+        setSummarizing(false);
+        setSummary(r);
+    };
+
+    const copyText = () => {
+        if (!rep) return;
+        const lines: string[] = [`# ${rep.username} 주간 보고 (${rep.week_start} ~ ${rep.week_end})`,
+            `커밋 ${rep.total_commits} · +${rep.total_add}/-${rep.total_del} · 머지 ${rep.merged_count} · MR생성 ${rep.opened_count}`, ''];
+        for (const p of rep.projects ?? []) {
+            lines.push(`## ${p.path} (커밋 ${p.commit_count}, +${p.add}/-${p.del})`);
+            (p.merged_mrs ?? []).forEach(m => lines.push(`- [머지] ${m}`));
+            (p.opened_mrs ?? []).forEach(m => lines.push(`- [MR] ${m}`));
+            (p.commit_msgs ?? []).forEach(c => lines.push(`- ${c}`));
+            lines.push('');
+        }
+        navigator.clipboard.writeText(lines.join('\n'));
+    };
+
+    const dayMax = Math.max(1, ...(rep?.days ?? []).map(d => d.commits));
+    const offLabel = offset === 0 ? '이번 주' : offset === 1 ? '지난 주' : `${offset}주 전`;
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>주간 리포트</h2>
+                <select className="jselect" value={user} onChange={e => setUser(e.target.value)}>
+                    <option value="">사용자 선택…</option>
+                    {users.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <div className="tabs">
+                    {[1, 2, 0].map(o => (
+                        <button key={o} className={offset === o ? 'tab tab-on' : 'tab'} onClick={() => setOffset(o)}>
+                            {o === 0 ? '이번 주' : o === 1 ? '지난 주' : `${o}주 전`}
+                        </button>
+                    ))}
+                </div>
+                {rep && !rep.error && <button className="btn btn-sm" onClick={copyText}>복사</button>}
+                {rep && !rep.error && rep.has_ai_key &&
+                    <button className="refresh-btn" onClick={runSummary} disabled={summarizing}>
+                        {summarizing ? 'AI 요약 중…' : '✨ AI 요약'}
+                    </button>}
+            </div>
+
+            {!user && <section className="stat-block"><div className="empty">사용자를 선택하면 {offLabel} 활동을 정리합니다</div></section>}
+            {loading && <section className="stat-block"><div className="empty">불러오는 중…</div></section>}
+            {rep?.error && <div className="error-banner">⚠ {rep.error}</div>}
+
+            {rep && !rep.error && !loading && (
+                <>
+                    <div className="cards">
+                        <div className="card"><div className="card-v">{rep.total_commits}</div><div className="card-l">커밋</div></div>
+                        <div className="card"><div className="card-v code-add">+{rep.total_add}</div><div className="card-l">추가 라인</div></div>
+                        <div className="card"><div className="card-v code-del">-{rep.total_del}</div><div className="card-l">삭제 라인</div></div>
+                        <div className="card"><div className="card-v">{rep.merged_count}</div><div className="card-l">머지</div></div>
+                        <div className="card"><div className="card-v">{rep.opened_count}</div><div className="card-l">MR 생성</div></div>
+                    </div>
+
+                    {summary && (
+                        <section className="stat-block">
+                            <h3>✨ AI 요약</h3>
+                            {summary.startsWith('ERR:')
+                                ? <div className="error-banner">{summary.slice(4)}</div>
+                                : <pre className="ai-summary">{summary}</pre>}
+                        </section>
+                    )}
+
+                    <section className="stat-block">
+                        <h3>일별 커밋 <span className="hint">{rep.week_start} ~ {rep.week_end}</span></h3>
+                        <div className="bars">
+                            {(rep.days ?? []).map(d => (
+                                <div key={d.day} className="bar-col" title={`${d.day} · 커밋 ${d.commits}, +${d.add}/-${d.del}`}>
+                                    <div className="bar-stack">
+                                        {d.commits > 0 && <div style={{height: `${(d.commits / dayMax) * 100}%`, background: 'var(--accent)'}}/>}
+                                    </div>
+                                    <span className="bar-x">{['월','화','수','목','금','토','일'][(new Date(d.day).getDay()+6)%7]}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+
+                    {(rep.projects ?? []).length === 0
+                        ? <section className="stat-block"><div className="empty">이 주에 기록된 활동이 없습니다</div></section>
+                        : (rep.projects ?? []).map(p => (
+                            <section key={p.path} className="stat-block">
+                                <h3>
+                                    <span className="drill" onClick={() => onDrill(p.path)}>{p.path}</span>
+                                    <span className="hint">커밋 {p.commit_count} · <i className="code-add">+{p.add}</i>/<i className="code-del">-{p.del}</i>
+                                        {p.web_url && <> · <a className="instance" onClick={() => OpenURL(p.web_url)}>레포 ↗</a></>}</span>
+                                </h3>
+                                {(p.merged_mrs ?? []).length > 0 && (
+                                    <div className="wk-group"><b>머지된 MR</b>
+                                        {(p.merged_mrs ?? []).map((m, i) => <div key={i} className="wk-item wk-merge">⛙ {m}</div>)}
+                                    </div>
+                                )}
+                                {(p.opened_mrs ?? []).length > 0 && (
+                                    <div className="wk-group"><b>생성한 MR</b>
+                                        {(p.opened_mrs ?? []).map((m, i) => <div key={i} className="wk-item wk-mr">⎇ {m}</div>)}
+                                    </div>
+                                )}
+                                {(p.commit_msgs ?? []).length > 0 && (
+                                    <div className="wk-group"><b>커밋 {(p.commit_msgs ?? []).length}건</b>
+                                        {(p.commit_msgs ?? []).map((c, i) => <div key={i} className="wk-item wk-commit">{c}</div>)}
+                                    </div>
+                                )}
+                            </section>
+                        ))}
+                </>
+            )}
+        </div>
+    );
+}
+
 // ---- Main app ----
 const FEED_LIMIT = 300;
 
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [tab, setTab] = useState<'feed' | 'stats' | 'ci' | 'jira'>('feed');
+    const [tab, setTab] = useState<'feed' | 'stats' | 'ci' | 'jira' | 'weekly'>('feed');
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
@@ -1308,6 +1455,7 @@ function App() {
                         <button className={tab === 'stats' ? 'tab tab-on' : 'tab'} onClick={() => setTab('stats')}>통계</button>
                         <button className={tab === 'ci' ? 'tab tab-on' : 'tab'} onClick={() => setTab('ci')}>파이프라인</button>
                         <button className={tab === 'jira' ? 'tab tab-on' : 'tab'} onClick={() => setTab('jira')}>Jira</button>
+                        <button className={tab === 'weekly' ? 'tab tab-on' : 'tab'} onClick={() => setTab('weekly')}>주간 리포트</button>
                     </nav>
                     <nav className="tabs">
                         {PERIODS.map(p => (
@@ -1332,7 +1480,7 @@ function App() {
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
             {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : (
+            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">

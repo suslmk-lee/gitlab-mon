@@ -33,3 +33,15 @@ export function SaveCSV(arg1, arg2) {
 export function SaveConfig(arg1, arg2) {
   return window['go']['main']['App']['SaveConfig'](arg1, arg2);
 }
+
+export function SummarizeWeek(arg1, arg2) {
+  return window['go']['main']['App']['SummarizeWeek'](arg1, arg2);
+}
+
+export function WeeklyReport(arg1, arg2) {
+  return window['go']['main']['App']['WeeklyReport'](arg1, arg2);
+}
+
+export function WeeklyReportUsers() {
+  return window['go']['main']['App']['WeeklyReportUsers']();
+}

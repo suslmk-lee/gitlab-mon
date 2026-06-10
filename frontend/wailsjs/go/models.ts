@@ -530,6 +530,106 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class WeekDay {
+	    day: string;
+	    commits: number;
+	    add: number;
+	    del: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WeekDay(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.day = source["day"];
+	        this.commits = source["commits"];
+	        this.add = source["add"];
+	        this.del = source["del"];
+	    }
+	}
+	export class WeekProjectWork {
+	    path: string;
+	    web_url: string;
+	    commit_count: number;
+	    add: number;
+	    del: number;
+	    commit_msgs: string[];
+	    merged_mrs: string[];
+	    opened_mrs: string[];
+	    branches: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new WeekProjectWork(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.web_url = source["web_url"];
+	        this.commit_count = source["commit_count"];
+	        this.add = source["add"];
+	        this.del = source["del"];
+	        this.commit_msgs = source["commit_msgs"];
+	        this.merged_mrs = source["merged_mrs"];
+	        this.opened_mrs = source["opened_mrs"];
+	        this.branches = source["branches"];
+	    }
+	}
+	export class WeekReport {
+	    username: string;
+	    week_start: string;
+	    week_end: string;
+	    week_offset: number;
+	    total_commits: number;
+	    total_add: number;
+	    total_del: number;
+	    merged_count: number;
+	    opened_count: number;
+	    projects: WeekProjectWork[];
+	    days: WeekDay[];
+	    has_ai_key: boolean;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WeekReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.username = source["username"];
+	        this.week_start = source["week_start"];
+	        this.week_end = source["week_end"];
+	        this.week_offset = source["week_offset"];
+	        this.total_commits = source["total_commits"];
+	        this.total_add = source["total_add"];
+	        this.total_del = source["total_del"];
+	        this.merged_count = source["merged_count"];
+	        this.opened_count = source["opened_count"];
+	        this.projects = this.convertValues(source["projects"], WeekProjectWork);
+	        this.days = this.convertValues(source["days"], WeekDay);
+	        this.has_ai_key = source["has_ai_key"];
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 
