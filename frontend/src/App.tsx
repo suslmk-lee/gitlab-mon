@@ -787,6 +787,18 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
         return groups;
     }, [items]);
 
+    // 제품별 최근 문서 — 렌더마다 재계산하지 않도록 메모이즈 (period 내, 최신순)
+    const docsByProduct = useMemo(() => {
+        const cut = periodCutoff(period);
+        const m = new Map<string, ConfluencePage[]>();
+        for (const p of PRODUCTS) {
+            m.set(p.id, snap.confluence_pages
+                .filter(pg => (pg.products || []).includes(p.id) && new Date(pg.updated).getTime() >= cut)
+                .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime()));
+        }
+        return m;
+    }, [snap, period]);
+
     const modal = selected &&
         <IssueModal issueKey={selected} issues={snap.jira_issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;
     const showPTag = prodFilter === 'all';
@@ -845,10 +857,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                 const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
                 const {inprog, todo} = productOpenIssues(snap.jira_issues, p);
                 const w = (n: number) => pr.total ? `${(n / pr.total) * 100}%` : '0%';
-                const docCut = periodCutoff(period);
-                const docs = snap.confluence_pages
-                    .filter(pg => (pg.products || []).includes(p.id) && new Date(pg.updated).getTime() >= docCut)
-                    .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
+                const docs = docsByProduct.get(p.id) ?? [];
                 return (
                     <section key={p.id} className="stat-block poc-dash" style={{borderLeft: `3px solid ${p.accent}`}}>
                         <div className="poc-dash-head">
@@ -920,12 +929,17 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                             }
                             if (it.source === 'confluence') {
                                 const pg = it.page!;
+                                // 문서는 두 제품에 걸칠 수 있으므로 매칭된 제품을 모두 태그로 표시
+                                const cfTags = showPTag && (pg.products || [])
+                                    .map(pid => PRODUCTS.find(x => x.id === pid))
+                                    .filter((x): x is Product => !!x)
+                                    .map(prod => <span key={prod.id} className="poc-ptag" style={{borderColor: prod.accent, color: prod.accent}}>{prod.name}</span>);
                                 return (
                                     <div key={it.id} className="event poc-row poc-cfrow" onClick={() => OpenURL(pg.url)}>
                                         <span className="badge poc-cfbadge"><Icon name="confluence" size={14}/></span>
                                         <div className="event-body">
                                             <div className="event-top">
-                                                {tag}
+                                                {cfTags}
                                                 <span className="poc-cfspace">{pg.space_name}</span>
                                                 <b>{pg.author}</b>
                                                 <span className="time">{timeAgo(it.iso)}</span>

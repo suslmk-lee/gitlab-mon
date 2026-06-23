@@ -63,13 +63,13 @@ func (t *cfTime) UnmarshalJSON(b []byte) error {
 	if s == "" || s == "null" {
 		return nil
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999-0700"} {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999-0700", "2006-01-02T15:04:05Z0700", "2006-01-02"} {
 		if parsed, err := time.Parse(layout, s); err == nil {
 			t.Time = parsed
 			return nil
 		}
 	}
-	return nil // 알 수 없는 포맷은 zero time으로
+	return nil // 알 수 없는 포맷은 zero time으로 (frontend가 너무 오래된 것으로 처리)
 }
 
 // Page is the normalized form shipped to the app/frontend.

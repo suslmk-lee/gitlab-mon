@@ -341,15 +341,18 @@ func (a *App) refresh() {
 	a.collectCommits(client, res.projects, since)
 	codeDaily := a.aggregateCodeDaily(users, since)
 
+	// 보조 소스(Jira/Confluence) 동기화 실패는 경고로만 표시한다. snap.Error에
+	// 넣으면 아래 알림 게이트(snap.Error=="")가 막혀 무관한 GitLab 알림까지
+	// 꺼지므로, GitLab 코어 오류(res.errs)와 분리한다.
+	var auxWarnings []string
+
 	// Jira: slow 사이클(5분)에만 증분 동기화
 	a.mu.Lock()
 	jc := a.jiraClient
 	a.mu.Unlock()
 	if jc != nil && slow {
 		if err := a.collectJira(jc, since); err != nil {
-			rmu.Lock()
-			res.errs = append(res.errs, err)
-			rmu.Unlock()
+			auxWarnings = append(auxWarnings, "Jira 동기화 실패: "+err.Error())
 		}
 	}
 	jiraIssues := a.aggregateJira()
@@ -360,9 +363,7 @@ func (a *App) refresh() {
 	a.mu.Unlock()
 	if cc != nil && slow {
 		if err := a.collectConfluence(cc, since); err != nil {
-			rmu.Lock()
-			res.errs = append(res.errs, err)
-			rmu.Unlock()
+			auxWarnings = append(auxWarnings, "Confluence 동기화 실패: "+err.Error())
 		}
 	}
 	confluencePages := a.aggregateConfluence()
@@ -370,7 +371,7 @@ func (a *App) refresh() {
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := enrichAll(events, pipelines, [][]gitlab.MergeRequest{res.openMRs, res.merged}, res.projects, groups)
 
-	var warnings []string
+	warnings := auxWarnings
 	if len(capped) > 0 {
 		var paths []string
 		for _, id := range capped {
