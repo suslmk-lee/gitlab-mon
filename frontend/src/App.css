@@ -902,6 +902,10 @@ html, body, #root {
     padding: 0 6px; flex-shrink: 0;
 }
 .poc-jact { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.pill-on.pill-cf { border-color: #2dd4bf; color: #2dd4bf; background: rgba(45, 212, 191, 0.12); box-shadow: 0 0 12px rgba(45, 212, 191, 0.2); }
+.poc-cfrow { cursor: pointer; box-shadow: inset 2px 0 0 #2dd4bf; }
+.poc-cfbadge { background: rgba(45, 212, 191, 0.12); color: #2dd4bf; }
+.poc-cfspace { color: #2dd4bf; font-size: 11px; flex-shrink: 0; }
 
 /* ---- 사용자 매핑 모달 ---- */
 .modal-wide { width: min(760px, 94vw); }

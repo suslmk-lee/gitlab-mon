@@ -107,19 +107,21 @@ func (a *App) publishFromCache() {
 	}
 
 	jiraIssues := a.aggregateJira()
+	confluencePages := a.aggregateConfluence()
 
 	a.publish(Snapshot{
-		FetchedAt:  m.FetchedAt, // 과거 시각 그대로 → UI에 "N분 전 갱신"으로 정직하게 표시
-		GitLabURL:  cfg.GitLabURL,
-		JiraURL:    cfg.JiraURL,
-		JiraIssues: jiraIssues,
-		Version:    m.Version,
-		Stats:      m.Stats,
-		Events:     events,
-		Projects:   projects,
-		OpenMRs:    m.OpenMRs,
-		MergedMRs:  m.MergedMRs,
-		Pipelines:  pipelines,
-		CodeDaily:  codeDaily,
+		FetchedAt:       m.FetchedAt, // 과거 시각 그대로 → UI에 "N분 전 갱신"으로 정직하게 표시
+		GitLabURL:       cfg.GitLabURL,
+		JiraURL:         cfg.JiraURL,
+		JiraIssues:      jiraIssues,
+		ConfluencePages: confluencePages,
+		Version:         m.Version,
+		Stats:           m.Stats,
+		Events:          events,
+		Projects:        projects,
+		OpenMRs:         m.OpenMRs,
+		MergedMRs:       m.MergedMRs,
+		Pipelines:       pipelines,
+		CodeDaily:       codeDaily,
 	})
 }

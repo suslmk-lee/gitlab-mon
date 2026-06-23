@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gitlab-mon/internal/config"
+	"gitlab-mon/internal/confluence"
 	"gitlab-mon/internal/gitlab"
 	"gitlab-mon/internal/jira"
 
@@ -62,21 +63,22 @@ type projPipelines struct {
 
 // Snapshot is the full dashboard state pushed to the frontend.
 type Snapshot struct {
-	FetchedAt   time.Time             `json:"fetched_at"`
-	GitLabURL   string                `json:"gitlab_url"`
-	Version     *gitlab.Version       `json:"version"`
-	Stats       *gitlab.Statistics    `json:"stats"`
-	Events      []gitlab.Event        `json:"events"` // all events in stats window, newest first
-	Projects    []gitlab.Project      `json:"projects"`
-	OpenMRs     []gitlab.MergeRequest `json:"open_mrs"`
-	MergedMRs   []gitlab.MergeRequest `json:"merged_mrs"` // merged within stats window
-	Pipelines   []gitlab.Pipeline     `json:"pipelines"`  // updated within stats window
-	CodeDaily   []CodeDay             `json:"code_daily"` // 사용자×날짜 라인 변경량 (기본 브랜치)
-	JiraIssues  []jira.Issue          `json:"jira_issues"`
-	JiraURL     string                `json:"jira_url"`
-	Error       string                `json:"error"`
-	Warning     string                `json:"warning"`
-	NeedsConfig bool                  `json:"needs_config"`
+	FetchedAt       time.Time             `json:"fetched_at"`
+	GitLabURL       string                `json:"gitlab_url"`
+	Version         *gitlab.Version       `json:"version"`
+	Stats           *gitlab.Statistics    `json:"stats"`
+	Events          []gitlab.Event        `json:"events"` // all events in stats window, newest first
+	Projects        []gitlab.Project      `json:"projects"`
+	OpenMRs         []gitlab.MergeRequest `json:"open_mrs"`
+	MergedMRs       []gitlab.MergeRequest `json:"merged_mrs"` // merged within stats window
+	Pipelines       []gitlab.Pipeline     `json:"pipelines"`  // updated within stats window
+	CodeDaily       []CodeDay             `json:"code_daily"` // 사용자×날짜 라인 변경량 (기본 브랜치)
+	JiraIssues      []jira.Issue          `json:"jira_issues"`
+	JiraURL         string                `json:"jira_url"`
+	ConfluencePages []confluence.Page     `json:"confluence_pages"` // PoC 관련 문서 (제품명 텍스트 매칭)
+	Error           string                `json:"error"`
+	Warning         string                `json:"warning"`
+	NeedsConfig     bool                  `json:"needs_config"`
 }
 
 // Progress reports collection progress to the frontend.
@@ -88,21 +90,24 @@ type Progress struct {
 
 // App struct
 type App struct {
-	ctx           context.Context
-	mu            sync.Mutex
-	cfg           config.Config
-	client        *gitlab.Client
-	snap          Snapshot
-	cache         map[int]*projEvents    // projectID → cached events
-	pipeCache     map[int]*projPipelines // projectID → cached pipelines
-	mrCache       map[int]*mrReview      // MR ID → cached review facts
-	commitCache   map[int]*projCommits   // projectID → cached commit stats
-	aliases       map[string]string      // git author key(email/name) → GitLab username
-	jiraClient    *jira.Client
-	jiraCache     map[string]*jira.Issue // issue key → issue
-	jiraFetchedAt time.Time
-	cycle         int    // poll cycle counter
-	lastSig       uint64 // signature of the last published snapshot
+	ctx                 context.Context
+	mu                  sync.Mutex
+	cfg                 config.Config
+	client              *gitlab.Client
+	snap                Snapshot
+	cache               map[int]*projEvents    // projectID → cached events
+	pipeCache           map[int]*projPipelines // projectID → cached pipelines
+	mrCache             map[int]*mrReview      // MR ID → cached review facts
+	commitCache         map[int]*projCommits   // projectID → cached commit stats
+	aliases             map[string]string      // git author key(email/name) → GitLab username
+	jiraClient          *jira.Client
+	jiraCache           map[string]*jira.Issue // issue key → issue
+	jiraFetchedAt       time.Time
+	confluenceClient    *confluence.Client
+	confluenceCache     map[string]*confluence.Page // page id → page
+	confluenceFetchedAt time.Time
+	cycle               int    // poll cycle counter
+	lastSig             uint64 // signature of the last published snapshot
 	// slow-changing metadata, refreshed every slowEvery cycles
 	lastVersion *gitlab.Version
 	lastStats   *gitlab.Statistics
@@ -117,14 +122,15 @@ type App struct {
 // NewApp creates a new App application struct
 func NewApp() *App {
 	return &App{
-		cache:         map[int]*projEvents{},
-		pipeCache:     map[int]*projPipelines{},
-		mrCache:       map[int]*mrReview{},
-		commitCache:   map[int]*projCommits{},
-		aliases:       map[string]string{},
-		jiraCache:     map[string]*jira.Issue{},
-		notifiedPipes: map[int]bool{},
-		knownMRs:      map[int]bool{},
+		cache:           map[int]*projEvents{},
+		pipeCache:       map[int]*projPipelines{},
+		mrCache:         map[int]*mrReview{},
+		commitCache:     map[int]*projCommits{},
+		aliases:         map[string]string{},
+		jiraCache:       map[string]*jira.Issue{},
+		confluenceCache: map[string]*confluence.Page{},
+		notifiedPipes:   map[int]bool{},
+		knownMRs:        map[int]bool{},
 	}
 }
 
@@ -139,6 +145,7 @@ func (a *App) startup(ctx context.Context) {
 	a.loadCommitsCache()
 	a.loadAliases()
 	a.loadJiraCache()
+	a.loadConfluenceCache()
 	a.publishFromCache() // 디스크 캐시로 즉시 화면 표시 (이후 폴링이 갱신)
 	go a.pollLoop(ctx)
 }
@@ -151,8 +158,11 @@ func (a *App) rebuildClient() {
 	}
 	if a.cfg.JiraURL != "" && a.cfg.JiraEmail != "" && a.cfg.JiraToken != "" {
 		a.jiraClient = jira.NewClient(a.cfg.JiraURL, a.cfg.JiraEmail, a.cfg.JiraToken)
+		// Confluence는 같은 Atlassian 사이트·자격증명을 공유 (wiki 경로만 추가)
+		a.confluenceClient = confluence.NewClient(a.cfg.JiraURL, a.cfg.JiraEmail, a.cfg.JiraToken)
 	} else {
 		a.jiraClient = nil
+		a.confluenceClient = nil
 	}
 }
 
@@ -344,6 +354,19 @@ func (a *App) refresh() {
 	}
 	jiraIssues := a.aggregateJira()
 
+	// Confluence: PoC 관련 문서를 slow 사이클에만 제품별 텍스트 매칭으로 수집
+	a.mu.Lock()
+	cc := a.confluenceClient
+	a.mu.Unlock()
+	if cc != nil && slow {
+		if err := a.collectConfluence(cc, since); err != nil {
+			rmu.Lock()
+			res.errs = append(res.errs, err)
+			rmu.Unlock()
+		}
+	}
+	confluencePages := a.aggregateConfluence()
+
 	// Enrich events / MRs with project paths and resolve bot author names.
 	byID := enrichAll(events, pipelines, [][]gitlab.MergeRequest{res.openMRs, res.merged}, res.projects, groups)
 
@@ -391,6 +414,9 @@ func (a *App) refresh() {
 	if jiraIssues == nil {
 		jiraIssues = []jira.Issue{}
 	}
+	if confluencePages == nil {
+		confluencePages = []confluence.Page{}
+	}
 
 	snap.Version = res.version
 	snap.Stats = res.stats
@@ -402,6 +428,7 @@ func (a *App) refresh() {
 	snap.CodeDaily = codeDaily
 	snap.JiraIssues = jiraIssues
 	snap.JiraURL = cfg.JiraURL
+	snap.ConfluencePages = confluencePages
 	if len(res.errs) > 0 {
 		// 부분 실패도 전부 노출
 		msgs := make([]string, len(res.errs))
@@ -418,6 +445,7 @@ func (a *App) refresh() {
 		a.saveMRCache()
 		a.saveCommitsCache()
 		a.saveJiraCache()
+		a.saveConfluenceCache()
 		a.saveMeta(&metaCache{
 			WindowDays: statsWindowDay,
 			FetchedAt:  snap.FetchedAt,
@@ -783,6 +811,10 @@ func snapshotSig(s *Snapshot) uint64 {
 	w(len(s.MergedMRs), len(s.Pipelines), len(s.CodeDaily), len(s.JiraIssues))
 	for _, is := range s.JiraIssues {
 		w(is.Key, is.Status, is.Updated.UnixNano())
+	}
+	w(len(s.ConfluencePages))
+	for _, p := range s.ConfluencePages {
+		w(p.ID, p.Updated.UnixNano())
 	}
 	for _, p := range s.Pipelines {
 		w(p.ID, p.Status)

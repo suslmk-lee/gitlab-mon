@@ -34,12 +34,16 @@ interface JiraIssue {
     type: string; created: string; updated: string; due_date: string;
     resolved: boolean; url: string;
 }
+interface ConfluencePage {
+    id: string; title: string; space_key: string; space_name: string;
+    author: string; created: string; updated: string; url: string; products: string[];
+}
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
     events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
     pipelines: Pipeline[]; code_daily: CodeDay[];
-    jira_issues: JiraIssue[]; jira_url: string;
+    jira_issues: JiraIssue[]; jira_url: string; confluence_pages: ConfluencePage[];
     error: string; warning: string; needs_config: boolean;
 }
 
@@ -96,6 +100,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     external: <><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>, // external-link
     bot: <><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></>, // bot
     jira: <><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></>, // square-check (Jira 이슈)
+    confluence: <><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></>, // file-text (Confluence 문서)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -715,15 +720,15 @@ function readinessLabel(pct: number): string {
     return '시작 전';
 }
 
-type TLSource = 'gitlab' | 'jira';
+type TLSource = 'gitlab' | 'jira' | 'confluence';
 interface TLItem {
     id: string; ts: number; iso: string; product: Product; source: TLSource;
-    event?: GLEvent; issue?: JiraIssue; jiraAction?: string;
+    event?: GLEvent; issue?: JiraIssue; jiraAction?: string; page?: ConfluencePage;
 }
 
 function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
     const [prodFilter, setProdFilter] = useState<'all' | string>('all'); // 기본: 둘 다 한 화면
-    const [sources, setSources] = useState<Set<TLSource>>(new Set(['gitlab', 'jira']));
+    const [sources, setSources] = useState<Set<TLSource>>(new Set(['gitlab', 'jira', 'confluence']));
     const [showBots, setShowBots] = useState(false);
     const [selected, setSelected] = useState<string | null>(null);
 
@@ -735,6 +740,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
     const items = useMemo(() => {
         const cut = periodCutoff(period);
         const out: TLItem[] = [];
+        const seenCf = new Set<string>(); // 두 제품에 걸친 문서 중복 방지
         for (const p of activeProducts) {
             if (sources.has('gitlab')) {
                 for (const e of snap.events) {
@@ -754,6 +760,15 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                         const act = i.status_category === 'done' ? '완료' : '상태 변경';
                         out.push({id: `ju-${i.key}`, ts: ut, iso: i.updated, product: p, source: 'jira', issue: i, jiraAction: act});
                     }
+                }
+            }
+            if (sources.has('confluence')) {
+                for (const pg of snap.confluence_pages) {
+                    if (!pg.products?.includes(p.id) || seenCf.has(pg.id)) continue;
+                    const t = new Date(pg.updated).getTime();
+                    if (t < cut) continue;
+                    seenCf.add(pg.id);
+                    out.push({id: `cf-${pg.id}`, ts: t, iso: pg.updated, product: p, source: 'confluence', page: pg});
                 }
             }
         }
@@ -853,9 +868,10 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                                 onClick={() => toggleSource('gitlab')}><Icon name="merge" size={12}/> GitLab</button>
                         <button className={`pill pill-comment ${sources.has('jira') ? 'pill-on' : ''}`}
                                 onClick={() => toggleSource('jira')}><Icon name="jira" size={12}/> Jira</button>
+                        <button className={`pill pill-cf ${sources.has('confluence') ? 'pill-on' : ''}`}
+                                onClick={() => toggleSource('confluence')}><Icon name="confluence" size={12}/> Confluence</button>
                         <button className={`pill pill-bot ${showBots ? 'pill-on' : ''}`}
                                 title="CI/토큰봇 활동 표시" onClick={() => setShowBots(v => !v)}><Icon name="bot" size={12}/> 봇</button>
-                        <span className="poc-soon" title="2단계에서 추가 예정">Confluence 예정</span>
                     </div>
                 </div>
                 {byDay.map(g => (
@@ -878,6 +894,23 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                                                 <span className="time">{timeAgo(e.created_at)}</span>
                                             </div>
                                             <div className="event-desc">{describeEvent(e)}</div>
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            if (it.source === 'confluence') {
+                                const pg = it.page!;
+                                return (
+                                    <div key={it.id} className="event poc-row poc-cfrow" onClick={() => OpenURL(pg.url)}>
+                                        <span className="badge poc-cfbadge"><Icon name="confluence" size={14}/></span>
+                                        <div className="event-body">
+                                            <div className="event-top">
+                                                {tag}
+                                                <span className="poc-cfspace">{pg.space_name}</span>
+                                                <b>{pg.author}</b>
+                                                <span className="time">{timeAgo(it.iso)}</span>
+                                            </div>
+                                            <div className="event-desc">{pg.title}</div>
                                         </div>
                                     </div>
                                 );
@@ -1696,6 +1729,7 @@ function App() {
         pipelines: s.pipelines ?? [],
         code_daily: s.code_daily ?? [],
         jira_issues: s.jira_issues ?? [],
+        confluence_pages: s.confluence_pages ?? [],
     });
     const isReady = (s: any) =>
         s && s.fetched_at && !String(s.fetched_at).startsWith('0001');
