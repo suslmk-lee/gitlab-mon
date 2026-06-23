@@ -827,25 +827,30 @@ html, body, #root {
 /* ---- PoC(제품 타임라인) ---- */
 .poc-sub { color: var(--muted); font-size: 11.5px; }
 
-.poc-progress {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 14px; margin-top: 4px;
+.poc-pills { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.poc-soon {
+    font-size: 10.5px; color: var(--muted); border: 1px dashed var(--stroke);
+    border-radius: 12px; padding: 3px 10px; opacity: 0.7;
 }
-.poc-card {
-    background: var(--glass); border: 1px solid var(--stroke);
-    border-radius: 14px; padding: 14px 16px;
-    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-}
-.poc-card-head { display: flex; align-items: center; gap: 8px; }
-.poc-card-head h3 { margin: 0; font-size: 14px; font-weight: 700; }
+
+/* 준비도 대시보드 (제품별) */
+.poc-dash { margin-top: 14px; }
+.poc-dash-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.poc-dash-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .poc-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 8px currentColor; }
 .poc-badge { font-size: 10px; font-weight: 600; border: 1px solid; border-radius: 6px; padding: 0 6px; }
-.poc-pct { margin-left: auto; font-size: 18px; font-weight: 700; color: var(--text); }
-.poc-bar-wrap {
-    height: 7px; background: rgba(255, 255, 255, 0.08);
-    border-radius: 4px; overflow: hidden; margin: 10px 0 9px;
+.poc-pct { margin-left: auto; font-size: 22px; font-weight: 800; }
+.poc-rlabel { color: var(--muted); font-size: 11.5px; flex-shrink: 0; }
+
+.poc-funnel {
+    display: flex; height: 9px; border-radius: 5px; overflow: hidden;
+    background: rgba(255, 255, 255, 0.07); margin-bottom: 8px;
 }
-.poc-bar { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
+.poc-seg { height: 100%; transition: width 0.4s ease; }
+.poc-seg.seg-done { background: var(--green); }
+.poc-seg.seg-prog { background: var(--orange); }
+.poc-seg.seg-todo { background: rgba(108, 182, 255, 0.4); }
+
 .poc-counts { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11.5px; color: var(--muted); }
 .poc-counts b { font-size: 12.5px; margin-right: 2px; }
 .poc-counts .c-done { color: var(--green); }
@@ -854,15 +859,25 @@ html, body, #root {
 .poc-total { margin-left: auto; }
 .poc-epic { color: var(--purple); font-weight: 600; }
 
-.poc-filters {
-    display: flex; flex-wrap: wrap; gap: 14px; align-items: center;
-    margin: 16px 0 4px; justify-content: space-between;
+.poc-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+@media (max-width: 720px) { .poc-lists { grid-template-columns: 1fr; } }
+.poc-list-h { margin: 0 0 6px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.poc-list-h::before { content: ''; width: 7px; height: 7px; border-radius: 2px; flex-shrink: 0; }
+.poc-list-prog::before { background: var(--orange); }
+.poc-list-todo::before { background: rgba(108, 182, 255, 0.7); }
+.poc-list-h .count { font-weight: 400; }
+.poc-list-empty { color: var(--muted); font-size: 11.5px; padding: 4px 2px; }
+.poc-more { color: var(--muted); font-size: 11px; padding: 5px 2px 0; }
+.poc-irow {
+    display: flex; align-items: baseline; gap: 8px; cursor: pointer;
+    padding: 5px 6px; border-radius: 7px; transition: background 0.15s;
 }
-.poc-pills { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
-.poc-soon {
-    font-size: 10.5px; color: var(--muted); border: 1px dashed var(--stroke);
-    border-radius: 12px; padding: 3px 10px; opacity: 0.7;
-}
+.poc-irow:hover { background: rgba(255, 255, 255, 0.05); }
+.poc-isum { font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.poc-iass { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+
+.poc-tl-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+.poc-tl-head h3 { margin: 0; }
 
 .poc-timeline { margin-top: 8px; }
 .poc-day { margin-bottom: 4px; }
