@@ -95,6 +95,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     repo: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>, // folder
     external: <><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></>, // external-link
     bot: <><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></>, // bot
+    jira: <><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></>, // square-check (Jira 이슈)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -659,6 +660,202 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                         <span className="time">{timeAgo(i.updated)}</span>
                     </div>
                 ))}
+            </section>
+            {modal}
+        </div>
+    );
+}
+
+// ---- PoC(제품 타임라인) view ----
+// 제품 = GitLab 그룹 + Jira 프로젝트 묶음. PoC 진행 현황을 한 화면에 통합.
+interface Product { id: string; name: string; badge: string; accent: string; jiraKeys: string[]; glGroup: string }
+const PRODUCTS: Product[] = [
+    {id: 'akashiq', name: 'AkashiQ',  badge: '기본', accent: 'var(--accent)', jiraKeys: ['KSHQ', 'AK'], glGroup: 'akashiq'},
+    {id: 'kosmos',  name: 'KosmosAI', badge: '부가', accent: 'var(--purple)', jiraKeys: ['KU'],        glGroup: 'kosmos'},
+];
+const glInProduct = (p: Product, path: string) => {
+    const g = p.glGroup.toLowerCase(), x = (path || '').toLowerCase();
+    return x === g || x.startsWith(g + '/');
+};
+
+interface ProductProgress { total: number; done: number; inprog: number; todo: number; epicTotal: number; epicDone: number }
+function jiraProgress(issues: JiraIssue[], p: Product): ProductProgress {
+    let total = 0, done = 0, inprog = 0, todo = 0, epicTotal = 0, epicDone = 0;
+    for (const i of issues) {
+        if (!p.jiraKeys.includes(i.project_key)) continue;
+        total++;
+        const isDone = i.status_category === 'done';
+        if ((i.type || '').toLowerCase() === 'epic') { epicTotal++; if (isDone) epicDone++; }
+        if (isDone) done++;
+        else if (i.status_category === 'indeterminate') inprog++;
+        else todo++;
+    }
+    return {total, done, inprog, todo, epicTotal, epicDone};
+}
+
+type TLSource = 'gitlab' | 'jira';
+interface TLItem {
+    id: string; ts: number; iso: string; product: Product; source: TLSource;
+    event?: GLEvent; issue?: JiraIssue; jiraAction?: string;
+}
+
+function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
+    const [prodFilter, setProdFilter] = useState<'all' | string>('all'); // 기본: 둘 다 한 화면
+    const [sources, setSources] = useState<Set<TLSource>>(new Set(['gitlab', 'jira']));
+    const [showBots, setShowBots] = useState(false);
+    const [selected, setSelected] = useState<string | null>(null);
+
+    const activeProducts = prodFilter === 'all' ? PRODUCTS : PRODUCTS.filter(p => p.id === prodFilter);
+    const toggleSource = (s: TLSource) => setSources(prev => {
+        const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n;
+    });
+
+    const items = useMemo(() => {
+        const cut = periodCutoff(period);
+        const out: TLItem[] = [];
+        for (const p of activeProducts) {
+            if (sources.has('gitlab')) {
+                for (const e of snap.events) {
+                    if (!showBots && e.author?.is_bot) continue;
+                    if (!glInProduct(p, e.project_path)) continue;
+                    const t = new Date(e.created_at).getTime();
+                    if (t < cut) continue;
+                    out.push({id: `gl-${e.id}`, ts: t, iso: e.created_at, product: p, source: 'gitlab', event: e});
+                }
+            }
+            if (sources.has('jira')) {
+                for (const i of snap.jira_issues) {
+                    if (!p.jiraKeys.includes(i.project_key)) continue;
+                    const ct = new Date(i.created).getTime(), ut = new Date(i.updated).getTime();
+                    if (ct >= cut) out.push({id: `jc-${i.key}`, ts: ct, iso: i.created, product: p, source: 'jira', issue: i, jiraAction: '생성'});
+                    if (ut >= cut && ut - ct > 60_000) {
+                        const act = i.status_category === 'done' ? '완료' : '상태 변경';
+                        out.push({id: `ju-${i.key}`, ts: ut, iso: i.updated, product: p, source: 'jira', issue: i, jiraAction: act});
+                    }
+                }
+            }
+        }
+        out.sort((a, b) => b.ts - a.ts);
+        return out.slice(0, 300);
+    }, [snap, period, prodFilter, sources, showBots]);
+
+    const byDay = useMemo(() => {
+        const groups: { day: string; items: TLItem[] }[] = [];
+        let cur: { day: string; items: TLItem[] } | null = null;
+        for (const it of items) {
+            const d = dayKey(it.iso);
+            if (!cur || cur.day !== d) { cur = {day: d, items: []}; groups.push(cur); }
+            cur.items.push(it);
+        }
+        return groups;
+    }, [items]);
+
+    const modal = selected &&
+        <IssueModal issueKey={selected} issues={snap.jira_issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;
+    const showPTag = prodFilter === 'all';
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>PoC 현황</h2>
+                <span className="poc-sub">AkashiQ 기본 + KosmosAI 부가 · GitLab 우선, Jira 보조</span>
+            </div>
+
+            <div className="poc-progress">
+                {PRODUCTS.map(p => {
+                    const pr = jiraProgress(snap.jira_issues, p);
+                    const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
+                    return (
+                        <div key={p.id} className="poc-card" style={{borderColor: p.accent}}>
+                            <div className="poc-card-head">
+                                <span className="poc-dot" style={{background: p.accent}}/>
+                                <h3 style={{color: p.accent}}>{p.name}</h3>
+                                <span className="poc-badge" style={{borderColor: p.accent, color: p.accent}}>{p.badge}</span>
+                                <span className="poc-pct">{pct}%</span>
+                            </div>
+                            <div className="poc-bar-wrap">
+                                <div className="poc-bar" style={{width: `${pct}%`, background: p.accent}}/>
+                            </div>
+                            <div className="poc-counts">
+                                <span><b className="c-done">{pr.done}</b> 완료</span>
+                                <span><b className="c-prog">{pr.inprog}</b> 진행</span>
+                                <span><b className="c-todo">{pr.todo}</b> 대기</span>
+                                <span className="poc-total">총 {pr.total}</span>
+                                {pr.epicTotal > 0 && <span className="poc-epic">에픽 {pr.epicDone}/{pr.epicTotal}</span>}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            <div className="poc-filters">
+                <div className="poc-pills">
+                    <button className={`pill ${prodFilter === 'all' ? 'pill-on pill-other' : ''}`}
+                            onClick={() => setProdFilter('all')}>전체</button>
+                    {PRODUCTS.map(p => (
+                        <button key={p.id}
+                                className={`pill ${prodFilter === p.id ? 'pill-on' : ''}`}
+                                style={prodFilter === p.id ? {borderColor: p.accent, color: p.accent} : undefined}
+                                onClick={() => setProdFilter(p.id)}>{p.name}</button>
+                    ))}
+                </div>
+                <div className="poc-pills">
+                    <button className={`pill pill-mr ${sources.has('gitlab') ? 'pill-on' : ''}`}
+                            onClick={() => toggleSource('gitlab')}><Icon name="merge" size={12}/> GitLab</button>
+                    <button className={`pill pill-comment ${sources.has('jira') ? 'pill-on' : ''}`}
+                            onClick={() => toggleSource('jira')}><Icon name="jira" size={12}/> Jira</button>
+                    <button className={`pill pill-bot ${showBots ? 'pill-on' : ''}`}
+                            title="CI/토큰봇 활동 표시" onClick={() => setShowBots(v => !v)}><Icon name="bot" size={12}/> 봇</button>
+                    <span className="poc-soon" title="2단계에서 추가 예정">Confluence 예정</span>
+                </div>
+            </div>
+
+            <section className="stat-block poc-timeline">
+                <h3>통합 타임라인 <span className="count">{items.length}{items.length === 300 ? '+' : ''} / {period}일</span></h3>
+                {byDay.map(g => (
+                    <div key={g.day} className="poc-day">
+                        <div className="poc-day-head"><span>{g.day}</span></div>
+                        {g.items.map(it => {
+                            const tag = showPTag &&
+                                <span className="poc-ptag" style={{borderColor: it.product.accent, color: it.product.accent}}>{it.product.name}</span>;
+                            if (it.source === 'gitlab') {
+                                const e = it.event!;
+                                const k = eventKind(e);
+                                return (
+                                    <div key={it.id} className={`event poc-row event-${k}`}>
+                                        <span className={`badge badge-${k}`}><Icon name={k} size={14}/></span>
+                                        <div className="event-body">
+                                            <div className="event-top">
+                                                {tag}
+                                                <b><AuthorName a={e.author}/></b>
+                                                <a className="proj" onClick={() => e.project_url && OpenURL(e.project_url)}>{e.project_path}</a>
+                                                <span className="time">{timeAgo(e.created_at)}</span>
+                                            </div>
+                                            <div className="event-desc">{describeEvent(e)}</div>
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            const i = it.issue!;
+                            return (
+                                <div key={it.id} className="event poc-row poc-jrow" onClick={() => setSelected(i.key)}>
+                                    <span className="badge poc-jbadge"><Icon name="jira" size={14}/></span>
+                                    <div className="event-body">
+                                        <div className="event-top">
+                                            {tag}
+                                            <span className={`jira-status jira-${i.status_category}`}>{i.status}</span>
+                                            <span className="jira-key">{i.key}</span>
+                                            <span className="poc-jact">{it.jiraAction}</span>
+                                            <span className="time">{timeAgo(it.iso)}</span>
+                                        </div>
+                                        <div className="event-desc">{i.summary}</div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ))}
+                {items.length === 0 && <div className="empty">표시할 항목이 없습니다 — 소스 필터 또는 기간을 확인하세요</div>}
             </section>
             {modal}
         </div>
@@ -1329,7 +1526,7 @@ const FEED_LIMIT = 300;
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [tab, setTab] = useState<'feed' | 'stats' | 'ci' | 'jira' | 'weekly'>('feed');
+    const [tab, setTab] = useState<'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc'>('feed');
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
@@ -1456,6 +1653,7 @@ function App() {
                         <button className={tab === 'ci' ? 'tab tab-on' : 'tab'} onClick={() => setTab('ci')}>파이프라인</button>
                         <button className={tab === 'jira' ? 'tab tab-on' : 'tab'} onClick={() => setTab('jira')}>Jira</button>
                         <button className={tab === 'weekly' ? 'tab tab-on' : 'tab'} onClick={() => setTab('weekly')}>주간 리포트</button>
+                        <button className={tab === 'poc' ? 'tab tab-on' : 'tab'} onClick={() => setTab('poc')}>PoC</button>
                     </nav>
                     <nav className="tabs">
                         {PERIODS.map(p => (
@@ -1480,7 +1678,7 @@ function App() {
             {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
             {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : (
+            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <PoCView snap={snap} period={period}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
