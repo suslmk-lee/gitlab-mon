@@ -68,26 +68,86 @@ func weekRange(offset int) (time.Time, time.Time) {
 	return start, start.AddDate(0, 0, 7)
 }
 
-// WeeklyReportUsers returns the list of GitLab usernames that have any activity
-// in the stats window, for the report's user picker.
+// Author identities filtered out of contributor lists, matched by lowercased name:
+//
+//	systemAuthors  — admin/system accounts.
+//	junkAuthors    — pure CI/template placeholders that are never a person.
+//	genericAuthors — default tool/OS git names; usually automation or a
+//	                 misconfigured commit, so hidden from the picker/stats — but
+//	                 kept in the 사용자 매핑 후보 목록 since they MAY be a real
+//	                 person, who can then be mapped onto their GitLab account.
+var systemAuthors = map[string]bool{"root": true, "ghost": true}
+var junkAuthors = map[string]bool{
+	"gitlab_user_name":           true, // GitLab CI 템플릿 placeholder
+	"your_github_id_with_access": true,
+	"ci_commit_author":           true,
+}
+var genericAuthors = map[string]bool{
+	"claude": true, // Claude Code AI 커밋 author
+	"ubuntu": true, // 서버 기본 git user.name
+}
+
+// isBotUsername reports whether a username is an automation/bot account.
+// lastUsers (admin /users) doesn't carry a reliable is_bot flag, so we match by
+// name pattern: group/project access-token bots (botUserRe) plus common CI bots.
+func isBotUsername(u string) bool {
+	if botUserRe.MatchString(u) {
+		return true
+	}
+	lu := strings.ToLower(u)
+	return lu == "gitlab-ci" || lu == "renovate" ||
+		strings.HasSuffix(lu, "-bot") || strings.HasSuffix(lu, "_bot") ||
+		strings.Contains(lu, "_bot_")
+}
+
+// isExcludedAuthor reports whether a resolved author should be hidden from
+// contributor lists (the weekly picker and the code-daily stats). Applied in one
+// place so the report and stats agree on who counts as a contributor.
+func isExcludedAuthor(u string) bool {
+	lu := strings.ToLower(u)
+	return isBotUsername(u) || systemAuthors[lu] || junkAuthors[lu] || genericAuthors[lu]
+}
+
+// isUnmappableNoise reports whether an author is pure automation/placeholder that
+// should never be offered as a mapping candidate. Unlike isExcludedAuthor it
+// keeps genericAuthors (ubuntu/claude), which may be a real person to map.
+func isUnmappableNoise(u string) bool {
+	lu := strings.ToLower(u)
+	return isBotUsername(u) || systemAuthors[lu] || junkAuthors[lu]
+}
+
+// WeeklyReportUsers returns the contributors with activity in the stats window,
+// for the report's user picker. Commit authors are canonicalized through
+// buildUserResolver (+ the alias map), so duplicate identities of one person
+// collapse onto their GitLab username. Bots, system accounts, and placeholder
+// identities are filtered out; a genuine but unmatched author (e.g. committing
+// from a personal laptop) stays visible so their commits aren't lost — connect
+// them to a GitLab user in the 사용자 매핑 screen (seeded by defaultAliases).
 func (a *App) WeeklyReportUsers() []string {
 	a.mu.Lock()
 	users := a.lastUsers
 	a.mu.Unlock()
-	resolve := buildUserResolver(users)
+	resolve := buildUserResolver(users, a.aliasesSnapshot())
 
 	set := map[string]bool{}
+	add := func(u string) {
+		if u == "" || isExcludedAuthor(u) {
+			return
+		}
+		set[u] = true
+	}
+
 	a.mu.Lock()
-	for _, c := range a.cache { // events
+	for _, c := range a.cache { // events: author는 이미 GitLab username
 		for _, e := range c.Events {
-			if u := e.Author.Username; u != "" && !e.Author.IsBot {
-				set[u] = true
+			if !e.Author.IsBot {
+				add(e.Author.Username)
 			}
 		}
 	}
-	for _, c := range a.commitCache {
+	for _, c := range a.commitCache { // commits: 별칭/유저 매핑 후 후보로
 		for _, cm := range c.Commits {
-			set[resolve(cm.AuthorName, cm.AuthorEmail)] = true
+			add(resolve(cm.AuthorName, cm.AuthorEmail))
 		}
 	}
 	a.mu.Unlock()
@@ -124,7 +184,7 @@ func (a *App) WeeklyReport(username string, offset int) WeekReport {
 	}
 	a.mu.Unlock()
 	rep.HasAIKey = apiKey != ""
-	resolve := buildUserResolver(users)
+	resolve := buildUserResolver(users, a.aliasesSnapshot())
 
 	inWeek := func(t time.Time) bool { return !t.Before(start) && t.Before(end) }
 

@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -1387,6 +1387,105 @@ interface WeekReportData {
     has_ai_key: boolean; error: string;
 }
 
+// ---- 사용자 매핑(git author → GitLab user) 설정 모달 ----
+interface AliasEntry { key: string; username: string }
+interface UnmappedAuthor { name: string; email: string; commits: number }
+interface GLUserLite { username: string; name: string }
+
+function AuthorMappingModal({onClose, onSaved}: { onClose: () => void; onSaved: () => void }) {
+    const [data, setData] = useState<{ aliases: AliasEntry[]; unmapped: UnmappedAuthor[]; users: GLUserLite[] } | null>(null);
+    const [aliases, setAliases] = useState<Map<string, string>>(new Map()); // key(email/name) → username
+    const [saving, setSaving] = useState(false);
+    const [warn, setWarn] = useState('');
+
+    useEffect(() => {
+        GetAuthorMappings().then((d: any) => {
+            setData(d);
+            const m = new Map<string, string>();
+            (d.aliases ?? []).forEach((a: AliasEntry) => m.set(a.key, a.username));
+            setAliases(m);
+        });
+    }, []);
+
+    const keyOf = (au: UnmappedAuthor) => (au.email || au.name).toLowerCase();
+    const assign = (au: UnmappedAuthor, username: string) => setAliases(prev => {
+        const n = new Map(prev);
+        if (username) n.set(keyOf(au), username); else n.delete(keyOf(au));
+        return n;
+    });
+    const removeAlias = (key: string) => setAliases(prev => { const n = new Map(prev); n.delete(key); return n; });
+
+    const save = async () => {
+        setSaving(true);
+        setWarn('');
+        const entries = [...aliases.entries()].map(([key, username]) => ({key, username}));
+        const r = await SaveAuthorMappings(entries);
+        setSaving(false);
+        onSaved(); // 저장은 완료됨 — picker 갱신
+        if (r) { setWarn(r); return; } // 경고 시 모달 유지하고 표시
+        onClose();
+    };
+
+    if (!data) {
+        return <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()}><div className="empty">불러오는 중…</div></div>
+        </div>;
+    }
+
+    const users = data.users;
+    const currentRows = [...aliases.entries()].sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+                <div className="modal-head">
+                    <h2 className="modal-title">사용자 매핑</h2>
+                    <span className="hint">git 작성자 → GitLab 사용자</span>
+                    <button className="modal-x" onClick={onClose}>✕</button>
+                </div>
+
+                <div className="modal-section">
+                    <h3>매핑 필요 <span className="count">{data.unmapped.length}</span></h3>
+                    <p className="hint">GitLab 계정과 연결되지 않은 커밋 작성자입니다. 본인 계정을 고르면 커밋이 합쳐집니다.</p>
+                    {data.unmapped.length === 0 && <div className="empty">모두 매핑되었습니다 🎉</div>}
+                    {data.unmapped.map(au => (
+                        <div key={au.name + '|' + au.email} className="map-row">
+                            <div className="map-id">
+                                <b>{au.name || '(이름 없음)'}</b>
+                                <span className="map-email">{au.email}</span>
+                            </div>
+                            <span className="map-commits">{au.commits} 커밋</span>
+                            <select className="jselect" value={aliases.get(keyOf(au)) ?? ''} onChange={e => assign(au, e.target.value)}>
+                                <option value="">— 그대로 두기 —</option>
+                                {users.map(u => <option key={u.username} value={u.username}>{u.username}{u.name ? ` (${u.name})` : ''}</option>)}
+                            </select>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="modal-section">
+                    <h3>현재 매핑 <span className="count">{currentRows.length}</span></h3>
+                    {currentRows.length === 0 && <div className="empty">매핑 없음</div>}
+                    {currentRows.map(([key, username]) => (
+                        <div key={key} className="map-row">
+                            <span className="map-email">{key}</span>
+                            <span className="map-arrow">→</span>
+                            <b className="map-target">{username}</b>
+                            <button className="map-del" title="삭제" onClick={() => removeAlias(key)}>✕</button>
+                        </div>
+                    ))}
+                </div>
+
+                {warn && <div className="warn-banner">⚠ {warn}</div>}
+                <div className="modal-actions">
+                    <button className="btn" onClick={onClose}>취소</button>
+                    <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '저장'}</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
     const [users, setUsers] = useState<string[]>([]);
     const [user, setUser] = useState('');
@@ -1395,8 +1494,10 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
     const [loading, setLoading] = useState(false);
     const [summary, setSummary] = useState('');
     const [summarizing, setSummarizing] = useState(false);
+    const [mapping, setMapping] = useState(false);
 
-    useEffect(() => { WeeklyReportUsers().then((u: string[]) => setUsers(u || [])); }, []);
+    const reloadUsers = () => WeeklyReportUsers().then((u: string[]) => setUsers(u || []));
+    useEffect(() => { reloadUsers(); }, []);
 
     useEffect(() => {
         if (!user) { setRep(null); return; }
@@ -1449,7 +1550,10 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
                     <button className="refresh-btn" onClick={runSummary} disabled={summarizing}>
                         {summarizing ? 'AI 요약 중…' : '✨ AI 요약'}
                     </button>}
+                <button className="btn btn-sm" onClick={() => setMapping(true)} title="git 작성자 ↔ GitLab 사용자 매핑">⚙ 사용자 매핑</button>
             </div>
+
+            {mapping && <AuthorMappingModal onClose={() => setMapping(false)} onSaved={reloadUsers}/>}
 
             {!user && <section className="stat-block"><div className="empty">사용자를 선택하면 {offLabel} 활동을 정리합니다</div></section>}
             {loading && <section className="stat-block"><div className="empty">불러오는 중…</div></section>}

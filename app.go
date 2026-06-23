@@ -97,6 +97,7 @@ type App struct {
 	pipeCache     map[int]*projPipelines // projectID → cached pipelines
 	mrCache       map[int]*mrReview      // MR ID → cached review facts
 	commitCache   map[int]*projCommits   // projectID → cached commit stats
+	aliases       map[string]string      // git author key(email/name) → GitLab username
 	jiraClient    *jira.Client
 	jiraCache     map[string]*jira.Issue // issue key → issue
 	jiraFetchedAt time.Time
@@ -120,6 +121,7 @@ func NewApp() *App {
 		pipeCache:     map[int]*projPipelines{},
 		mrCache:       map[int]*mrReview{},
 		commitCache:   map[int]*projCommits{},
+		aliases:       map[string]string{},
 		jiraCache:     map[string]*jira.Issue{},
 		notifiedPipes: map[int]bool{},
 		knownMRs:      map[int]bool{},
@@ -135,6 +137,7 @@ func (a *App) startup(ctx context.Context) {
 	a.loadCache()
 	a.loadMRCache()
 	a.loadCommitsCache()
+	a.loadAliases()
 	a.loadJiraCache()
 	a.publishFromCache() // 디스크 캐시로 즉시 화면 표시 (이후 폴링이 갱신)
 	go a.pollLoop(ctx)

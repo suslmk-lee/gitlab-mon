@@ -887,3 +887,32 @@ html, body, #root {
     padding: 0 6px; flex-shrink: 0;
 }
 .poc-jact { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+
+/* ---- 사용자 매핑 모달 ---- */
+.modal-wide { width: min(760px, 94vw); }
+.modal-section h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.modal-section h3 .count { font-weight: 400; }
+.map-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.map-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.map-id b { font-size: 12.5px; }
+.map-email {
+    color: var(--muted); font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.map-commits { color: var(--muted); font-size: 11px; flex-shrink: 0; white-space: nowrap; }
+.map-row .jselect { font-size: 11.5px; padding: 4px 8px; flex-shrink: 0; max-width: 240px; }
+.map-arrow { color: var(--muted); flex-shrink: 0; }
+.map-target { color: var(--accent); font-size: 12.5px; flex-shrink: 0; }
+.map-del {
+    margin-left: auto; flex-shrink: 0; cursor: pointer;
+    background: none; border: none; color: var(--muted); font-size: 13px; padding: 2px 6px;
+}
+.map-del:hover { color: var(--red); }
+.modal-actions {
+    display: flex; justify-content: flex-end; gap: 10px;
+    margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--stroke);
+}

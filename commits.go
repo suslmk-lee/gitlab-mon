@@ -166,9 +166,20 @@ func (a *App) collectCommits(client *gitlab.Client, projects []gitlab.Project, s
 	wg.Wait()
 }
 
-// buildUserResolver maps a git author (name/email) to a GitLab username
-// using admin user data, falling back to the git author name.
-func buildUserResolver(users []gitlab.User) func(name, email string) string {
+// defaultAliases seeds the user-mapping config on first run (when no aliases.json
+// exists yet). After that the file — editable in the 사용자 매핑 settings screen —
+// is the source of truth. Key: lowercased git author email or name; value: GitLab
+// username. These cover contributors whose local git config (name/email) doesn't
+// match their GitLab account, so their commits aren't split under a duplicate name.
+var defaultAliases = map[string]string{
+	"minkyu@minkyuui-macbookair.local":   "mctlmk", // 이민규 (개인 노트북)
+	"minkyu@local":                       "mctlmk",
+	"jb@gimjeongbin-ui-macbookair.local": "Jay", // 김정빈 = Jungbin Kim
+}
+
+// buildUserResolver maps a git author (name/email) to a GitLab username using the
+// given aliases first, then admin user data, falling back to the git author name.
+func buildUserResolver(users []gitlab.User, aliases map[string]string) func(name, email string) string {
 	byEmail := map[string]string{}
 	byName := map[string]string{}
 	for _, u := range users {
@@ -183,8 +194,24 @@ func buildUserResolver(users []gitlab.User) func(name, email string) string {
 		}
 		byName[strings.ToLower(u.Username)] = u.Username
 	}
+	// canon maps an alias value to the canonical GitLab username casing/spelling,
+	// so an alias target that differs in case still matches event authors (whose
+	// names come straight from GitLab) instead of splitting a person across rows.
+	canon := func(v string) string {
+		if cu, ok := byName[strings.ToLower(v)]; ok {
+			return cu
+		}
+		return v
+	}
 	return func(name, email string) string {
 		e := strings.ToLower(email)
+		n := strings.ToLower(name)
+		if u, ok := aliases[e]; ok { // 명시적 별칭이 최우선
+			return canon(u)
+		}
+		if u, ok := aliases[n]; ok {
+			return canon(u)
+		}
 		if u, ok := byEmail[e]; ok {
 			return u
 		}
@@ -193,7 +220,7 @@ func buildUserResolver(users []gitlab.User) func(name, email string) string {
 				return u
 			}
 		}
-		if u, ok := byName[strings.ToLower(name)]; ok {
+		if u, ok := byName[n]; ok {
 			return u
 		}
 		return name // 매핑 실패: git author name 그대로
@@ -203,7 +230,7 @@ func buildUserResolver(users []gitlab.User) func(name, email string) string {
 // aggregateCodeDaily rolls the commit cache up to per-user-per-day rows,
 // resolving git author identities to GitLab usernames where possible.
 func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay {
-	resolve := buildUserResolver(users)
+	resolve := buildUserResolver(users, a.aliasesSnapshot())
 
 	type key struct{ user, day string }
 	agg := map[key]*CodeDay{}
@@ -213,7 +240,11 @@ func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay
 			if cm.CreatedAt.Before(since) {
 				continue
 			}
-			k := key{resolve(cm.AuthorName, cm.AuthorEmail), cm.CreatedAt.Local().Format("2006-01-02")}
+			user := resolve(cm.AuthorName, cm.AuthorEmail)
+			if isExcludedAuthor(user) { // 봇/시스템/플레이스홀더는 통계에서 제외 (picker와 일치)
+				continue
+			}
+			k := key{user, cm.CreatedAt.Local().Format("2006-01-02")}
 			row := agg[k]
 			if row == nil {
 				row = &CodeDay{User: k.user, Day: k.day}
