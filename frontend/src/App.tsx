@@ -807,6 +807,20 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
             {list.length > LIST_CAP && <div className="poc-more">+{list.length - LIST_CAP}개 더</div>}
         </div>
     );
+    const docList = (docs: ConfluencePage[]) => (
+        <div className="poc-list">
+            <h4 className="poc-list-h poc-list-doc">최근 문서 <span className="count">{docs.length}</span></h4>
+            {docs.length === 0 && <div className="poc-list-empty">없음</div>}
+            {docs.slice(0, LIST_CAP).map(pg => (
+                <div key={pg.id} className="poc-irow" onClick={() => OpenURL(pg.url)}>
+                    <span className="poc-cfspace">{pg.space_key}</span>
+                    <span className="poc-isum">{pg.title}</span>
+                    <span className="poc-iass">{timeAgo(pg.updated)}</span>
+                </div>
+            ))}
+            {docs.length > LIST_CAP && <div className="poc-more">+{docs.length - LIST_CAP}개 더</div>}
+        </div>
+    );
 
     return (
         <div className="stats scroll">
@@ -831,6 +845,10 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                 const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
                 const {inprog, todo} = productOpenIssues(snap.jira_issues, p);
                 const w = (n: number) => pr.total ? `${(n / pr.total) * 100}%` : '0%';
+                const docCut = periodCutoff(period);
+                const docs = snap.confluence_pages
+                    .filter(pg => (pg.products || []).includes(p.id) && new Date(pg.updated).getTime() >= docCut)
+                    .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime());
                 return (
                     <section key={p.id} className="stat-block poc-dash" style={{borderLeft: `3px solid ${p.accent}`}}>
                         <div className="poc-dash-head">
@@ -851,10 +869,12 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                             <span><b className="c-todo">{pr.todo}</b> 대기</span>
                             <span className="poc-total">총 {pr.total}</span>
                             {pr.epicTotal > 0 && <span className="poc-epic">에픽 {pr.epicDone}/{pr.epicTotal}</span>}
+                            <span className="poc-docs"><b className="c-doc">{docs.length}</b> 문서 ({period}일)</span>
                         </div>
                         <div className="poc-lists">
                             {issueList('지금 진행 중', 'prog', inprog)}
                             {issueList('남은 일', 'todo', todo)}
+                            {docList(docs)}
                         </div>
                     </section>
                 );

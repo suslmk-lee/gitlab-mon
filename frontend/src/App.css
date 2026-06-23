@@ -856,15 +856,17 @@ html, body, #root {
 .poc-counts .c-done { color: var(--green); }
 .poc-counts .c-prog { color: var(--orange); }
 .poc-counts .c-todo { color: var(--accent); }
+.poc-counts .c-doc { color: #2dd4bf; }
 .poc-total { margin-left: auto; }
 .poc-epic { color: var(--purple); font-weight: 600; }
+.poc-docs { color: var(--muted); }
 
-.poc-lists { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
-@media (max-width: 720px) { .poc-lists { grid-template-columns: 1fr; } }
+.poc-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-top: 12px; }
 .poc-list-h { margin: 0 0 6px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .poc-list-h::before { content: ''; width: 7px; height: 7px; border-radius: 2px; flex-shrink: 0; }
 .poc-list-prog::before { background: var(--orange); }
 .poc-list-todo::before { background: rgba(108, 182, 255, 0.7); }
+.poc-list-doc::before { background: #2dd4bf; }
 .poc-list-h .count { font-weight: 400; }
 .poc-list-empty { color: var(--muted); font-size: 11.5px; padding: 4px 2px; }
 .poc-more { color: var(--muted); font-size: 11px; padding: 5px 2px 0; }
