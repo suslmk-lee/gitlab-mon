@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -53,7 +53,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc';
+type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -120,6 +120,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     chart: <><path d="M3 3v16a2 2 0 0 0 2 2h16"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></>, // bar-chart (통계)
     calendar: <><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 2v4"/><path d="M16 2v4"/></>, // calendar (주간 리포트)
     box: <><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></>, // box (프로젝트)
+    gear: <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>, // settings (설정)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -1758,6 +1759,75 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
     );
 }
 
+// ---- 설정: 거래처/프로젝트(엔티티) 레지스트리 관리 ----
+const ACCENTS = [
+    {label: '파랑', val: 'var(--accent)'}, {label: '보라', val: 'var(--purple)'},
+    {label: '초록', val: 'var(--green)'}, {label: '주황', val: 'var(--orange)'}, {label: '빨강', val: 'var(--red)'},
+];
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'entity';
+
+function SettingsView() {
+    const [list, setList] = useState<Entity[] | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState('');
+    const [mapping, setMapping] = useState(false);
+    useEffect(() => { GetEntities().then((es: any) => setList(es || [])); }, []);
+
+    const csv = (arr: string[]) => (arr || []).join(', ');
+    const parse = (s: string) => s.split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
+
+    if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
+    const upd = (i: number, patch: Partial<Entity>) => setList(l => l!.map((e, idx) => idx === i ? {...e, ...patch} : e));
+    const add = () => setList(l => [...l!, {id: '', name: '', kind: 'project', gitlab_groups: [], jira_keys: [], confluence_query: '', aliases: [], accent: 'var(--accent)', active: true}]);
+    const del = (i: number) => setList(l => l!.filter((_, idx) => idx !== i));
+    const save = async () => {
+        setSaving(true); setMsg('');
+        const out = list.map(e => ({...e, id: (e.id || '').trim() || slug(e.name)}));
+        const r = await SaveEntities(out);
+        setSaving(false);
+        setList(out);
+        setMsg(r || '저장되었습니다 ✓');
+    };
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>설정 — 거래처 / 프로젝트</h2>
+                <button className="btn btn-sm" onClick={() => setMapping(true)}>⚙ 사용자 매핑</button>
+            </div>
+            <p className="hint">엔티티는 GitLab 그룹·Jira 키·Confluence 검색어로 활동을 모읍니다. 여러 개는 쉼표로 입력. 저장하면 사이드바·허브에 반영됩니다.</p>
+            {list.map((e, i) => (
+                <section key={i} className="stat-block ent-card" style={{borderLeft: `3px solid ${e.accent || 'var(--accent)'}`}}>
+                    <div className="ent-row">
+                        <input className="ent-in ent-name" placeholder="이름" value={e.name} onChange={ev => upd(i, {name: ev.target.value})}/>
+                        <select className="jselect" value={e.kind} onChange={ev => upd(i, {kind: ev.target.value})}>
+                            <option value="project">프로젝트</option>
+                            <option value="company">거래처</option>
+                        </select>
+                        <select className="jselect" value={e.accent || 'var(--accent)'} onChange={ev => upd(i, {accent: ev.target.value})}>
+                            {ACCENTS.map(a => <option key={a.val} value={a.val}>{a.label}</option>)}
+                        </select>
+                        <label className="ent-active"><input type="checkbox" checked={e.active} onChange={ev => upd(i, {active: ev.target.checked})}/> 활성</label>
+                        <button className="map-del" title="삭제" onClick={() => del(i)}>✕</button>
+                    </div>
+                    <div className="ent-grid">
+                        <label className="ent-field">GitLab 그룹<input className="ent-in" placeholder="akashiq" value={csv(e.gitlab_groups)} onChange={ev => upd(i, {gitlab_groups: parse(ev.target.value)})}/></label>
+                        <label className="ent-field">Jira 키<input className="ent-in" placeholder="KSHQ, AK" value={csv(e.jira_keys)} onChange={ev => upd(i, {jira_keys: parse(ev.target.value)})}/></label>
+                        <label className="ent-field">Confluence 검색어<input className="ent-in" placeholder="(비우면 이름 사용)" value={e.confluence_query} onChange={ev => upd(i, {confluence_query: ev.target.value})}/></label>
+                    </div>
+                </section>
+            ))}
+            <div className="ent-actions">
+                <button className="btn btn-sm" onClick={add}>+ 엔티티 추가</button>
+                <span style={{flex: 1}}/>
+                {msg && <span className="hint">{msg}</span>}
+                <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '저장'}</button>
+            </div>
+            {mapping && <AuthorMappingModal onClose={() => setMapping(false)} onSaved={() => {}}/>}
+        </div>
+    );
+}
+
 // ---- Main app ----
 const FEED_LIMIT = 300;
 
@@ -1921,6 +1991,12 @@ function App() {
                             </div>
                         );
                     })}
+                    <div className="nav-group">
+                        <div className="nav-group-label">설정</div>
+                        <button className={`nav-item ${tab === 'settings' ? 'nav-on' : ''}`} onClick={() => setTab('settings')}>
+                            <Icon name="gear" size={15}/> <span>설정</span>
+                        </button>
+                    </div>
                 </div>
                 <div className="sidebar-foot">
                     <a className="instance" onClick={() => OpenURL(snap.gitlab_url)}>
@@ -1954,7 +2030,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : (
+                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
