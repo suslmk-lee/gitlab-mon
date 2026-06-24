@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -108,6 +109,7 @@ type App struct {
 	confluenceCache     map[string]*confluence.Page // page id → page
 	confluenceFetchedAt time.Time
 	entities            []Entity // 거래처/프로젝트 레지스트리 (entities.json)
+	db                  *sql.DB  // 로컬 기록 저장소 (회의/통화 노트)
 	cycle               int      // poll cycle counter
 	lastSig             uint64   // signature of the last published snapshot
 	// slow-changing metadata, refreshed every slowEvery cycles
@@ -147,6 +149,7 @@ func (a *App) startup(ctx context.Context) {
 	a.loadCommitsCache()
 	a.loadAliases()
 	a.loadEntities()
+	a.openNotesDB()
 	a.loadJiraCache()
 	a.loadConfluenceCache()
 	a.publishFromCache() // 디스크 캐시로 즉시 화면 표시 (이후 폴링이 갱신)
