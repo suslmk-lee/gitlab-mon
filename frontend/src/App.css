@@ -421,7 +421,7 @@ html, body, #root {
 }
 .card:hover { transform: translateY(-2px); background: var(--glass-hover); }
 .card-v {
-    font-size: 21px; font-weight: 700;
+    font-size: 21px; font-weight: 700; line-height: 1.25;
     background: linear-gradient(90deg, #fff, #b9d9ff);
     -webkit-background-clip: text; background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -479,8 +479,13 @@ html, body, #root {
     background: linear-gradient(90deg, rgba(220, 38, 38, 0.8), rgba(248, 113, 113, 0.9));
     box-shadow: 0 0 8px rgba(248, 113, 113, 0.35);
 }
-.code-add { color: var(--green); width: 56px; }
-.code-del { color: var(--red); width: 56px; }
+.code-add { color: var(--green); }
+.code-del { color: var(--red); }
+/* width 고정은 리더보드 점수 칼럼에만 — 카드 큰 숫자(.card-v)엔 적용되면 잘림 */
+.lb-score.code-add, .lb-score.code-del { min-width: 56px; width: auto; }
+/* 카드 큰 숫자는 추가/삭제 색을 따르도록 그래디언트 fill 위에 색 지정 */
+.card-v.code-add { -webkit-text-fill-color: var(--green); }
+.card-v.code-del { -webkit-text-fill-color: var(--red); }
 
 /* ---- 주간 리포트 ---- */
 .wk-group { margin: 8px 0; }
@@ -501,7 +506,7 @@ html, body, #root {
     background: rgba(108, 182, 255, 0.06); border: 1px solid rgba(108, 182, 255, 0.25);
     border-radius: 10px; padding: 14px 16px; color: var(--text);
 }
-.lb-score { width: 44px; text-align: right; font-weight: 700; font-size: 12px; flex-shrink: 0; }
+.lb-score { min-width: 44px; text-align: right; font-weight: 700; font-size: 12px; flex-shrink: 0; }
 .lb-detail { color: var(--muted); font-size: 11px; width: 260px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* heatmap */

@@ -78,6 +78,8 @@ const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: strin
     // 거래처/프로젝트 그룹은 엔티티 레지스트리(snap.entities)로 동적 생성됨.
 ];
 const periodCutoff = (p: Period) => Date.now() - p * 86_400_000;
+// 천 단위 쉼표 (예: 1323 → "1,323")
+const comma = (n: number) => n.toLocaleString('en-US');
 
 // ---- Helpers ----
 function timeAgo(iso: string): string {
@@ -241,7 +243,8 @@ function aggregateUsers(events: GLEvent[], w: Weights): UserStat[] {
 
 // ---- Small components ----
 function StatChip({label, value}: { label: string; value: string }) {
-    return <div className="chip"><span className="chip-value">{value}</span><span className="chip-label">{label}</span></div>;
+    const v = value.replace(/\d{4,}/g, m => Number(m).toLocaleString('en-US')); // 천 단위 쉼표
+    return <div className="chip"><span className="chip-value">{v}</span><span className="chip-label">{label}</span></div>;
 }
 
 // 초 단위 갱신 표시 — 이 컴포넌트만 1초마다 리렌더
@@ -635,12 +638,12 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                 </select>
             </div>
             <div className="cards">
-                <div className="card"><div className="card-v">{open.length}</div><div className="card-l">열린 이슈</div></div>
-                <div className="card"><div className="card-v">{inProgress.length}</div><div className="card-l">진행 중</div></div>
-                <div className="card"><div className="card-v">{createdInPeriod.length}</div><div className="card-l">생성 ({period}일)</div></div>
-                <div className="card"><div className="card-v">{doneInPeriod.length}</div><div className="card-l">완료 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{comma(open.length)}</div><div className="card-l">열린 이슈</div></div>
+                <div className="card"><div className="card-v">{comma(inProgress.length)}</div><div className="card-l">진행 중</div></div>
+                <div className="card"><div className="card-v">{comma(createdInPeriod.length)}</div><div className="card-l">생성 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{comma(doneInPeriod.length)}</div><div className="card-l">완료 ({period}일)</div></div>
                 <div className="card">
-                    <div className="card-v" style={{WebkitTextFillColor: overdue.length > 0 ? 'var(--red)' : undefined}}>{overdue.length}</div>
+                    <div className="card-v" style={{WebkitTextFillColor: overdue.length > 0 ? 'var(--red)' : undefined}}>{comma(overdue.length)}</div>
                     <div className="card-l">기한 초과</div>
                 </div>
             </div>
@@ -1132,10 +1135,10 @@ function CIView({snap, period, onDrill}: { snap: Snapshot; period: Period; onDri
     return (
         <div className="stats scroll">
             <div className="cards">
-                <div className="card"><div className="card-v">{pipes.length}</div><div className="card-l">파이프라인 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{comma(pipes.length)}</div><div className="card-l">파이프라인 ({period}일)</div></div>
                 <div className="card"><div className="card-v" style={{WebkitTextFillColor: rate !== null && rate < 70 ? 'var(--red)' : undefined}}>{rate !== null ? `${rate}%` : '—'}</div><div className="card-l">성공률</div></div>
-                <div className="card"><div className="card-v">{failed.length}</div><div className="card-l">실패</div></div>
-                <div className="card"><div className="card-v">{running.length}</div><div className="card-l">실행/대기 중</div></div>
+                <div className="card"><div className="card-v">{comma(failed.length)}</div><div className="card-l">실패</div></div>
+                <div className="card"><div className="card-v">{comma(running.length)}</div><div className="card-l">실행/대기 중</div></div>
                 <div className="card"><div className="card-v">{durs.length ? fmtDur(avgDur) : '—'}</div><div className="card-l">평균 소요 (근사)</div></div>
             </div>
 
@@ -1344,7 +1347,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
     [codeAgg]);
     const codeMax = Math.max(1, ...codeByUser.map(([, r]) => r.add + r.del));
     const codeTotals = codeByUser.reduce((acc, [, r]) => ({add: acc.add + r.add, del: acc.del + r.del}), {add: 0, del: 0});
-    const fmtN = (n: number) => n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+    const fmtN = comma;
 
     // 유휴 레포: 기간 내 활동 없음
     const idleRepos = useMemo(() => {
@@ -1377,12 +1380,12 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
         <div className="stats scroll">
             {/* MR 지표 카드 */}
             <div className="cards">
-                <div className="card"><div className="card-v">{mrOpened}</div><div className="card-l">MR 생성 ({period}일)</div></div>
-                <div className="card"><div className="card-v">{mergedMRs.length}</div><div className="card-l">머지 완료 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{comma(mrOpened)}</div><div className="card-l">MR 생성 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{comma(mergedMRs.length)}</div><div className="card-l">머지 완료 ({period}일)</div></div>
                 <div className="card"><div className="card-v">{leadTimes.length ? fmtDur(avgLead) : '—'}</div><div className="card-l">평균 머지 리드타임</div></div>
-                <div className="card"><div className="card-v">{snap.open_mrs.length}</div><div className="card-l">열린 MR</div></div>
+                <div className="card"><div className="card-v">{comma(snap.open_mrs.length)}</div><div className="card-l">열린 MR</div></div>
                 <div className="card"><div className="card-v">{openAges.length ? fmtDur(avgOpenAge) : '—'}</div><div className="card-l">열린 MR 평균 나이</div></div>
-                <div className="card"><div className="card-v">{events.length}</div><div className="card-l">전체 이벤트 ({period}일)</div></div>
+                <div className="card"><div className="card-v">{comma(events.length)}</div><div className="card-l">전체 이벤트 ({period}일)</div></div>
                 <div className="card"><div className="card-v">{reviewTimes.length ? fmtDur(avgFirstReview) : '—'}</div><div className="card-l">평균 첫 리뷰 시간</div></div>
                 <div className="card">
                     <div className="card-v" style={{WebkitTextFillColor: mergedMRs.length > 0 && mergedNoReview / mergedMRs.length > 0.5 ? 'var(--orange)' : undefined}}>
@@ -1759,11 +1762,11 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
             {rep && !rep.error && !loading && (
                 <>
                     <div className="cards">
-                        <div className="card"><div className="card-v">{rep.total_commits}</div><div className="card-l">커밋</div></div>
-                        <div className="card"><div className="card-v code-add">+{rep.total_add}</div><div className="card-l">추가 라인</div></div>
-                        <div className="card"><div className="card-v code-del">-{rep.total_del}</div><div className="card-l">삭제 라인</div></div>
-                        <div className="card"><div className="card-v">{rep.merged_count}</div><div className="card-l">머지</div></div>
-                        <div className="card"><div className="card-v">{rep.opened_count}</div><div className="card-l">MR 생성</div></div>
+                        <div className="card"><div className="card-v">{comma(rep.total_commits)}</div><div className="card-l">커밋</div></div>
+                        <div className="card"><div className="card-v code-add">+{comma(rep.total_add)}</div><div className="card-l">추가 라인</div></div>
+                        <div className="card"><div className="card-v code-del">-{comma(rep.total_del)}</div><div className="card-l">삭제 라인</div></div>
+                        <div className="card"><div className="card-v">{comma(rep.merged_count)}</div><div className="card-l">머지</div></div>
+                        <div className="card"><div className="card-v">{comma(rep.opened_count)}</div><div className="card-l">MR 생성</div></div>
                     </div>
 
                     {summary && (
@@ -2185,10 +2188,10 @@ function DashboardView({snap, onEntity, onTab}: { snap: Snapshot; onEntity: (id:
                 <span className="poc-sub">{snap.gitlab_url.replace(/^https?:\/\//, '')} · 한눈에 보기</span>
             </div>
             <div className="cards">
-                <div className="card dash-card" onClick={() => onTab('jira')}><div className="card-v">{inprog}</div><div className="card-l">진행 중 이슈</div></div>
-                <div className="card dash-card" onClick={() => onTab('feed')}><div className="card-v">{snap.open_mrs.length}</div><div className="card-l">열린 MR</div></div>
-                <div className="card"><div className="card-v" style={{WebkitTextFillColor: overdue.length > 0 ? 'var(--red)' : undefined}}>{overdue.length}</div><div className="card-l">기한 초과</div></div>
-                <div className="card dash-card" onClick={() => onTab('records')}><div className="card-v">{notes.length}</div><div className="card-l">기록</div></div>
+                <div className="card dash-card" onClick={() => onTab('jira')}><div className="card-v">{comma(inprog)}</div><div className="card-l">진행 중 이슈</div></div>
+                <div className="card dash-card" onClick={() => onTab('feed')}><div className="card-v">{comma(snap.open_mrs.length)}</div><div className="card-l">열린 MR</div></div>
+                <div className="card"><div className="card-v" style={{WebkitTextFillColor: overdue.length > 0 ? 'var(--red)' : undefined}}>{comma(overdue.length)}</div><div className="card-l">기한 초과</div></div>
+                <div className="card dash-card" onClick={() => onTab('records')}><div className="card-v">{comma(notes.length)}</div><div className="card-l">기록</div></div>
             </div>
 
             <section className="stat-block">
