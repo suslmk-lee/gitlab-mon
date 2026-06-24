@@ -1054,6 +1054,25 @@ html, body, #root {
 .md-a:hover { text-decoration: underline; }
 .md-hr { border: none; border-top: 1px solid var(--stroke); margin: 12px 0; }
 
+/* ---- 홈 대시보드 ---- */
+.dash-card { cursor: pointer; }
+.dash-ents { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.dash-ent {
+    background: var(--glass); border: 1px solid var(--stroke); border-radius: 12px;
+    padding: 12px 14px; cursor: pointer; transition: background 0.15s, transform 0.15s;
+}
+.dash-ent:hover { background: var(--glass-hover); transform: translateY(-2px); }
+.dash-ent-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.dash-ent-top b { font-size: 13.5px; }
+.dash-pct { margin-left: auto; font-size: 17px; font-weight: 800; }
+.dash-ent .poc-funnel { margin-bottom: 7px; }
+.dash-ent-counts { font-size: 11px; color: var(--muted); }
+.dash-ent-counts .c-done { color: var(--green); }
+.dash-ent-counts .c-prog { color: var(--orange); }
+.dash-ent-counts .c-todo { color: var(--accent); }
+.dash-more { margin-left: 8px; font-size: 11px; color: var(--accent); cursor: pointer; font-weight: 400; }
+.dash-more:hover { text-decoration: underline; }
+
 /* ---- 통합 검색 ---- */
 .src-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; vertical-align: middle; flex-shrink: 0; }
 .src-ent { background: var(--purple); }

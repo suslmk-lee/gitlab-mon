@@ -60,7 +60,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'settings';
+type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -133,6 +133,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     gear: <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>, // settings (설정)
     note: <><path d="M2 6h3"/><path d="M2 10h3"/><path d="M2 14h3"/><path d="M2 18h3"/><rect width="16" height="20" x="5" y="2" rx="2"/><path d="M9.5 8h5"/><path d="M9.5 12h5"/><path d="M9.5 16H14"/></>, // notebook (기록)
     search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>, // 검색
+    home: <><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></>, // layout-dashboard (대시보드)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -2158,6 +2159,94 @@ function SettingsView() {
     );
 }
 
+// ---- 홈 대시보드 (부하 최소: 스냅샷 + 로컬 노트를 클라이언트에서 집계) ----
+function DashboardView({snap, onEntity, onTab}: { snap: Snapshot; onEntity: (id: string) => void; onTab: (t: Tab) => void }) {
+    const [notes, setNotes] = useState<Note[]>([]);
+    const [selJira, setSelJira] = useState<string | null>(null);
+    const [editNote, setEditNote] = useState<Note | null>(null);
+    useEffect(() => { ListNotes('').then((ns: any) => setNotes(ns || [])); }, []);
+
+    const ents = snap.entities.filter(e => e.active);
+    const today = new Date().toISOString().slice(0, 10);
+    const entKeys = new Set<string>();
+    ents.forEach(e => (e.jira_keys || []).forEach(k => entKeys.add(k)));
+    const jira = snap.jira_issues.filter(i => entKeys.has(i.project_key));
+    const inprog = jira.filter(i => i.status_category === 'indeterminate').length;
+    const overdue = jira.filter(i => i.status_category !== 'done' && i.due_date && i.due_date < today)
+        .sort((a, b) => a.due_date.localeCompare(b.due_date));
+    const recentNotes = [...notes]
+        .sort((a, b) => (b.occurred_at || b.updated_at).localeCompare(a.occurred_at || a.updated_at))
+        .slice(0, 8);
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>대시보드</h2>
+                <span className="poc-sub">{snap.gitlab_url.replace(/^https?:\/\//, '')} · 한눈에 보기</span>
+            </div>
+            <div className="cards">
+                <div className="card dash-card" onClick={() => onTab('jira')}><div className="card-v">{inprog}</div><div className="card-l">진행 중 이슈</div></div>
+                <div className="card dash-card" onClick={() => onTab('feed')}><div className="card-v">{snap.open_mrs.length}</div><div className="card-l">열린 MR</div></div>
+                <div className="card"><div className="card-v" style={{WebkitTextFillColor: overdue.length > 0 ? 'var(--red)' : undefined}}>{overdue.length}</div><div className="card-l">기한 초과</div></div>
+                <div className="card dash-card" onClick={() => onTab('records')}><div className="card-v">{notes.length}</div><div className="card-l">기록</div></div>
+            </div>
+
+            <section className="stat-block">
+                <h3>엔티티 진행도</h3>
+                {ents.length === 0 && <div className="empty">설정에서 거래처/프로젝트를 추가하세요</div>}
+                <div className="dash-ents">
+                    {ents.map(e => {
+                        const pr = jiraProgress(snap.jira_issues, e);
+                        const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
+                        const w = (n: number) => pr.total ? `${(n / pr.total) * 100}%` : '0%';
+                        const acc = e.accent || 'var(--accent)';
+                        return (
+                            <div key={e.id} className="dash-ent" onClick={() => onEntity(e.id)} style={{borderLeft: `3px solid ${acc}`}}>
+                                <div className="dash-ent-top"><span className="poc-dot" style={{background: acc}}/><b>{e.name}</b><span className="dash-pct" style={{color: acc}}>{pct}%</span></div>
+                                <div className="poc-funnel">
+                                    <div className="poc-seg seg-done" style={{width: w(pr.done)}}/>
+                                    <div className="poc-seg seg-prog" style={{width: w(pr.inprog)}}/>
+                                    <div className="poc-seg seg-todo" style={{width: w(pr.todo)}}/>
+                                </div>
+                                <div className="dash-ent-counts"><b className="c-done">{pr.done}</b> 완료 · <b className="c-prog">{pr.inprog}</b> 진행 · <b className="c-todo">{pr.todo}</b> 대기</div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
+
+            <div className="stat-cols">
+                <section className="stat-block">
+                    <h3>기한 초과 / 임박 <span className="count">{overdue.length}</span></h3>
+                    {overdue.length === 0 && <div className="empty">없음 👍</div>}
+                    {overdue.slice(0, 10).map(i => (
+                        <div key={i.key} className="pipe" onClick={() => setSelJira(i.key)}>
+                            <span className="jira-key">{i.key}</span>
+                            <span className="pipe-proj">{i.summary}</span>
+                            <span className="jira-due">~{i.due_date}</span>
+                        </div>
+                    ))}
+                    {overdue.length > 10 && <div className="poc-more">+{overdue.length - 10}건 더</div>}
+                </section>
+                <section className="stat-block">
+                    <h3>최근 기록 <span className="count">{notes.length}</span><a className="dash-more" onClick={() => onTab('records')}>전체 보기</a></h3>
+                    {recentNotes.length === 0 && <div className="empty">기록 없음 — 기록 탭에서 추가</div>}
+                    {recentNotes.map(n => (
+                        <div key={n.id} className="pipe" onClick={() => setEditNote(n)}>
+                            <span className={`note-kind note-${n.kind}`}>{n.kind === 'call' ? '통화' : '회의'}</span>
+                            <span className="pipe-proj">{n.title || '(제목 없음)'}</span>
+                            <span className="time">{(n.occurred_at || '').slice(0, 10)}</span>
+                        </div>
+                    ))}
+                </section>
+            </div>
+
+            {selJira && <IssueModal issueKey={selJira} issues={snap.jira_issues} onClose={() => setSelJira(null)} onSelect={setSelJira}/>}
+            {editNote && <NoteEditor note={editNote} entities={snap.entities} onClose={() => setEditNote(null)} onReload={() => ListNotes('').then((ns: any) => setNotes(ns || []))}/>}
+        </div>
+    );
+}
+
 // ---- 통합 검색 (부하 최소: 폴링으로 받은 스냅샷 + 로컬 노트를 클라이언트에서 필터) ----
 function SearchView({snap, onEntity}: { snap: Snapshot; onEntity: (id: string) => void }) {
     const [query, setQuery] = useState('');
@@ -2275,7 +2364,7 @@ const FEED_LIMIT = 300;
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [tab, setTab] = useState<Tab>('feed');
+    const [tab, setTab] = useState<Tab>('home');
     const [hubFocus, setHubFocus] = useState<'all' | string>('all'); // 엔티티 허브 포커스
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
@@ -2398,6 +2487,9 @@ function App() {
                 </div>
                 <div className="nav-scroll">
                     <div className="nav-group">
+                        <button className={`nav-item ${tab === 'home' ? 'nav-on' : ''}`} onClick={() => setTab('home')}>
+                            <Icon name="home" size={15}/> <span>대시보드</span>
+                        </button>
                         <button className={`nav-item ${tab === 'search' ? 'nav-on' : ''}`} onClick={() => setTab('search')}>
                             <Icon name="search" size={15}/> <span>통합 검색</span>
                         </button>
@@ -2476,7 +2568,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'settings' ? <SettingsView/> : (
+                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
