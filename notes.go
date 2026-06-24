@@ -2,10 +2,14 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"gitlab-mon/internal/confluence"
 
 	_ "modernc.org/sqlite"
 )
@@ -189,6 +193,109 @@ func (a *App) SaveNote(n Note) NoteResult {
 		return NoteResult{Error: err.Error()}
 	}
 	return NoteResult{Note: n}
+}
+
+// getNote loads a single note (with entity links) by id.
+func (a *App) getNote(id int64) (Note, error) {
+	db := a.notesDB()
+	if db == nil {
+		return Note{}, fmt.Errorf("로컬 저장소가 준비되지 않았습니다")
+	}
+	var n Note
+	err := db.QueryRow(`SELECT id,kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url FROM notes WHERE id=?`, id).
+		Scan(&n.ID, &n.Kind, &n.Title, &n.OccurredAt, &n.Participants, &n.Summary, &n.Decisions, &n.ActionItems, &n.CreatedAt, &n.UpdatedAt, &n.ConfluenceID, &n.ConfluenceURL)
+	if err != nil {
+		return Note{}, err
+	}
+	n.EntityIDs = noteEntityIDs(db, n.ID)
+	return n, nil
+}
+
+// noteConfluenceTitle builds the page title (date helps uniqueness within a space).
+func noteConfluenceTitle(n Note) string {
+	t := strings.TrimSpace(n.Title)
+	if t == "" {
+		t = "기록"
+	}
+	if d := n.OccurredAt; len(d) >= 10 {
+		return fmt.Sprintf("%s (%s)", t, d[:10])
+	}
+	return t
+}
+
+// noteStorageHTML renders a note to Confluence storage-format XHTML.
+func noteStorageHTML(n Note, entities []Entity) string {
+	esc := html.EscapeString
+	para := func(s string) string { return strings.ReplaceAll(esc(s), "\n", "<br/>") }
+	var names []string
+	for _, id := range n.EntityIDs {
+		nm := id
+		for _, e := range entities {
+			if e.ID == id {
+				nm = e.Name
+				break
+			}
+		}
+		names = append(names, esc(nm))
+	}
+	kind := "회의"
+	if n.Kind == "call" {
+		kind = "통화"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "<p><strong>종류</strong> %s · <strong>일시</strong> %s", kind, esc(n.OccurredAt))
+	if n.Participants != "" {
+		fmt.Fprintf(&b, " · <strong>참석자</strong> %s", esc(n.Participants))
+	}
+	b.WriteString("</p>")
+	if len(names) > 0 {
+		fmt.Fprintf(&b, "<p><strong>관련</strong> %s</p>", strings.Join(names, ", "))
+	}
+	section := func(title, body string) {
+		if strings.TrimSpace(body) == "" {
+			return
+		}
+		fmt.Fprintf(&b, "<h2>%s</h2><p>%s</p>", esc(title), para(body))
+	}
+	section("요약", n.Summary)
+	section("결정 사항", n.Decisions)
+	section("액션 아이템", n.ActionItems)
+	b.WriteString("<hr/><p><em>Quantum Hub에서 작성된 기록</em></p>")
+	return b.String()
+}
+
+// ShareNote publishes a note to Confluence — creates a new page (in spaceKey) the
+// first time, then updates that page on subsequent shares. Stores the page
+// id/url back on the note. Returns the updated note or an error.
+func (a *App) ShareNote(id int64, spaceKey string) NoteResult {
+	a.mu.Lock()
+	cc := a.confluenceClient
+	a.mu.Unlock()
+	if cc == nil {
+		return NoteResult{Error: "Confluence가 설정되지 않았습니다"}
+	}
+	n, err := a.getNote(id)
+	if err != nil {
+		return NoteResult{Error: "기록을 찾을 수 없습니다: " + err.Error()}
+	}
+	title := noteConfluenceTitle(n)
+	body := noteStorageHTML(n, a.entitiesSnapshot())
+
+	var ref confluence.PageRef
+	if n.ConfluenceID == "" {
+		if strings.TrimSpace(spaceKey) == "" {
+			return NoteResult{Error: "공유할 스페이스를 선택하세요"}
+		}
+		ref, err = cc.CreatePage(spaceKey, title, body)
+	} else {
+		ref, err = cc.UpdatePage(n.ConfluenceID, title, body)
+	}
+	if err != nil {
+		return NoteResult{Error: err.Error()}
+	}
+	n.ConfluenceID = ref.ID
+	n.ConfluenceURL = ref.URL
+	return a.SaveNote(n) // confluence_id/url 영속화
 }
 
 // DeleteNote removes a note and its entity links. Returns "" on success.

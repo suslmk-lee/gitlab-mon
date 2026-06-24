@@ -1,6 +1,7 @@
 package confluence
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -137,4 +138,120 @@ func (c *Client) Search(cql string, limit int) ([]Page, error) {
 		})
 	}
 	return pages, nil
+}
+
+// send issues a JSON request and decodes the response (status < 300 = ok).
+func (c *Client) send(method, path string, body any, out any) error {
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, c.BaseURL+path, rdr)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.Email, c.Token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("Confluence %s %s: %s %s", method, path, resp.Status, string(respBody[:min(len(respBody), 200)]))
+	}
+	if out != nil {
+		return json.Unmarshal(respBody, out)
+	}
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Space is a Confluence space offered as a publish target.
+type Space struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
+// ListSpaces returns current global spaces (publish targets).
+func (c *Client) ListSpaces() ([]Space, error) {
+	q := url.Values{"type": {"global"}, "status": {"current"}, "limit": {"200"}}
+	var raw struct {
+		Results []Space `json:"results"`
+	}
+	if err := c.get("/wiki/rest/api/space", q, &raw); err != nil {
+		return nil, err
+	}
+	return raw.Results, nil
+}
+
+// PageRef identifies a created/updated page.
+type PageRef struct {
+	ID  string
+	URL string
+}
+
+func storageBody(html string) map[string]any {
+	return map[string]any{"storage": map[string]string{"value": html, "representation": "storage"}}
+}
+
+// CreatePage creates a new page in spaceKey with storage-format HTML.
+func (c *Client) CreatePage(spaceKey, title, html string) (PageRef, error) {
+	payload := map[string]any{
+		"type": "page", "title": title,
+		"space": map[string]string{"key": spaceKey},
+		"body":  storageBody(html),
+	}
+	var r struct {
+		ID    string `json:"id"`
+		Links struct {
+			Base  string `json:"base"`
+			WebUI string `json:"webui"`
+		} `json:"_links"`
+	}
+	if err := c.send(http.MethodPost, "/wiki/rest/api/content", payload, &r); err != nil {
+		return PageRef{}, err
+	}
+	return PageRef{ID: r.ID, URL: r.Links.Base + r.Links.WebUI}, nil
+}
+
+// UpdatePage replaces an existing page's title/body (auto-increments version).
+func (c *Client) UpdatePage(id, title, html string) (PageRef, error) {
+	var cur struct {
+		Version struct {
+			Number int `json:"number"`
+		} `json:"version"`
+	}
+	if err := c.get("/wiki/rest/api/content/"+id, url.Values{"expand": {"version"}}, &cur); err != nil {
+		return PageRef{}, err
+	}
+	payload := map[string]any{
+		"type": "page", "title": title,
+		"version": map[string]int{"number": cur.Version.Number + 1},
+		"body":    storageBody(html),
+	}
+	var r struct {
+		ID    string `json:"id"`
+		Links struct {
+			Base  string `json:"base"`
+			WebUI string `json:"webui"`
+		} `json:"_links"`
+	}
+	if err := c.send(http.MethodPut, "/wiki/rest/api/content/"+id, payload, &r); err != nil {
+		return PageRef{}, err
+	}
+	return PageRef{ID: id, URL: r.Links.Base + r.Links.WebUI}, nil
 }

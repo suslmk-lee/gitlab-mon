@@ -89,6 +89,21 @@ func (a *App) collectConfluence(client *confluence.Client) error {
 	return nil
 }
 
+// ConfluenceSpaces lists available publish-target spaces for the note share UI.
+func (a *App) ConfluenceSpaces() []confluence.Space {
+	a.mu.Lock()
+	cc := a.confluenceClient
+	a.mu.Unlock()
+	if cc == nil {
+		return []confluence.Space{}
+	}
+	spaces, err := cc.ListSpaces()
+	if err != nil || spaces == nil {
+		return []confluence.Space{}
+	}
+	return spaces
+}
+
 // aggregateConfluence flattens the page cache, newest-updated first.
 func (a *App) aggregateConfluence() []confluence.Page {
 	a.mu.Lock()

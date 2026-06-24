@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -44,6 +44,7 @@ interface Note {
     decisions: string; action_items: string;
     created_at: string; updated_at: string; confluence_id: string; confluence_url: string;
 }
+interface CfSpace { key: string; name: string }
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
@@ -1776,14 +1777,20 @@ function blankNote(): Note {
         created_at: '', updated_at: '', confluence_id: '', confluence_url: ''};
 }
 
-function NoteEditor({note, entities, onClose, onSaved}: {
-    note: Note; entities: Entity[]; onClose: () => void; onSaved: () => void;
+function NoteEditor({note, entities, onClose, onReload}: {
+    note: Note; entities: Entity[]; onClose: () => void; onReload: () => void;
 }) {
     const [n, setN] = useState<Note>(note);
     const [saving, setSaving] = useState(false);
+    const [sharing, setSharing] = useState(false);
     const [err, setErr] = useState('');
-    const set = (patch: Partial<Note>) => setN(prev => ({...prev, ...patch}));
+    const [ok, setOk] = useState('');
+    const [spaces, setSpaces] = useState<CfSpace[]>([]);
+    const [space, setSpace] = useState('');
+    const set = (patch: Partial<Note>) => { setN(prev => ({...prev, ...patch})); setOk(''); };
     const toggleEntity = (id: string) => set({entity_ids: n.entity_ids.includes(id) ? n.entity_ids.filter(x => x !== id) : [...n.entity_ids, id]});
+
+    useEffect(() => { ConfluenceSpaces().then((s: any) => setSpaces(s || [])); }, []);
 
     const save = async () => {
         if (!n.title.trim()) { setErr('제목을 입력하세요'); return; }
@@ -1791,12 +1798,23 @@ function NoteEditor({note, entities, onClose, onSaved}: {
         const r: any = await SaveNote(n);
         setSaving(false);
         if (r?.error) { setErr(r.error); return; }
-        onSaved();
+        if (r?.note) setN(r.note); // id 유지 — 닫지 않고 공유까지 이어서
+        setOk('저장됨 ✓');
+        onReload();
+    };
+    const share = async () => {
+        setSharing(true); setErr(''); setOk('');
+        const r: any = await ShareNote(n.id, space);
+        setSharing(false);
+        if (r?.error) { setErr(r.error); return; }
+        if (r?.note) setN(r.note);
+        setOk('Confluence에 공유됨 ✓');
+        onReload();
     };
     const del = async () => {
-        if (!n.id) { onClose(); return; }
-        await DeleteNote(n.id);
-        onSaved();
+        if (n.id) await DeleteNote(n.id);
+        onReload();
+        onClose();
     };
 
     return (
@@ -1832,11 +1850,36 @@ function NoteEditor({note, entities, onClose, onSaved}: {
                 <label className="ent-field">요약<textarea className="ent-in note-area" value={n.summary} onChange={e => set({summary: e.target.value})}/></label>
                 <label className="ent-field">결정 사항<textarea className="ent-in note-area" value={n.decisions} onChange={e => set({decisions: e.target.value})}/></label>
                 <label className="ent-field">액션 아이템<textarea className="ent-in note-area" value={n.action_items} onChange={e => set({action_items: e.target.value})}/></label>
+
+                {n.id > 0 && (
+                    <div className="note-share">
+                        {n.confluence_url ? (
+                            <>
+                                <span className="note-shared-on"><Icon name="confluence" size={13}/> 공유됨</span>
+                                <a className="instance" onClick={() => OpenURL(n.confluence_url)}>Confluence에서 열기</a>
+                                <span style={{flex: 1}}/>
+                                <button className="btn btn-sm" onClick={share} disabled={sharing}>{sharing ? '업데이트 중…' : '공유 업데이트'}</button>
+                            </>
+                        ) : spaces.length > 0 ? (
+                            <>
+                                <span className="note-share-label"><Icon name="confluence" size={13}/> Confluence 공유</span>
+                                <select className="jselect" value={space} onChange={e => setSpace(e.target.value)}>
+                                    <option value="">스페이스 선택…</option>
+                                    {spaces.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
+                                </select>
+                                <button className="btn btn-sm" onClick={share} disabled={sharing || !space}>{sharing ? '공유 중…' : '공유'}</button>
+                            </>
+                        ) : <span className="hint">Confluence가 설정되지 않아 공유할 수 없습니다.</span>}
+                    </div>
+                )}
+                {n.id === 0 && <p className="hint">저장하면 Confluence에 공유할 수 있습니다.</p>}
+
                 {err && <div className="warn-banner">⚠ {err}</div>}
                 <div className="modal-actions">
                     {n.id ? <button className="map-del" title="삭제" onClick={del}>삭제</button> : <span/>}
+                    {ok && <span className="hint">{ok}</span>}
                     <span style={{flex: 1}}/>
-                    <button className="btn btn-sm" onClick={onClose}>취소</button>
+                    <button className="btn btn-sm" onClick={onClose}>닫기</button>
                     <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '저장'}</button>
                 </div>
             </div>
@@ -1891,7 +1934,7 @@ function RecordsView({snap}: { snap: Snapshot }) {
                 </section>
             ))}
 
-            {editing && <NoteEditor note={editing} entities={snap.entities} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }}/>}
+            {editing && <NoteEditor note={editing} entities={snap.entities} onClose={() => setEditing(null)} onReload={reload}/>}
         </div>
     );
 }
