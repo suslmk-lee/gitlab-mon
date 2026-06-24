@@ -756,17 +756,20 @@ function readinessLabel(pct: number): string {
     return '시작 전';
 }
 
-type TLSource = 'gitlab' | 'jira' | 'confluence';
+type TLSource = 'gitlab' | 'jira' | 'confluence' | 'note';
 interface TLItem {
     id: string; ts: number; iso: string; product: Entity; source: TLSource;
-    event?: GLEvent; issue?: JiraIssue; jiraAction?: string; page?: ConfluencePage;
+    event?: GLEvent; issue?: JiraIssue; jiraAction?: string; page?: ConfluencePage; note?: Note;
 }
+const noteTime = (n: Note) => new Date((n.occurred_at && n.occurred_at.length >= 10 ? n.occurred_at.slice(0, 10) : n.updated_at) || n.updated_at).getTime();
 
 // 엔티티 허브 — 사이드바에서 고른 거래처/프로젝트(focus) 또는 전체의 준비도·타임라인.
 function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus: 'all' | string }) {
-    const [sources, setSources] = useState<Set<TLSource>>(new Set(['gitlab', 'jira', 'confluence']));
+    const [sources, setSources] = useState<Set<TLSource>>(new Set(['gitlab', 'jira', 'confluence', 'note']));
     const [showBots, setShowBots] = useState(false);
     const [selected, setSelected] = useState<string | null>(null);
+    const [notes, setNotes] = useState<Note[]>([]);
+    useEffect(() => { ListNotes('').then((ns: any) => setNotes(ns || [])); }, []);
 
     const entities = snap.entities.filter(e => e.active);
     const activeProducts = focus === 'all' ? entities : entities.filter(e => e.id === focus);
@@ -778,6 +781,7 @@ function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus:
         const cut = periodCutoff(period);
         const out: TLItem[] = [];
         const seenCf = new Set<string>(); // 두 제품에 걸친 문서 중복 방지
+        const seenNote = new Set<number>(); // 여러 엔티티에 걸친 노트 중복 방지
         for (const p of activeProducts) {
             if (sources.has('gitlab')) {
                 for (const e of snap.events) {
@@ -808,10 +812,19 @@ function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus:
                     out.push({id: `cf-${pg.id}`, ts: t, iso: pg.updated, product: p, source: 'confluence', page: pg});
                 }
             }
+            if (sources.has('note')) {
+                for (const nt of notes) {
+                    if (!(nt.entity_ids || []).includes(p.id) || seenNote.has(nt.id)) continue;
+                    const t = noteTime(nt);
+                    if (isNaN(t) || t < cut) continue;
+                    seenNote.add(nt.id);
+                    out.push({id: `nt-${nt.id}`, ts: t, iso: (nt.occurred_at || nt.updated_at), product: p, source: 'note', note: nt});
+                }
+            }
         }
         out.sort((a, b) => b.ts - a.ts);
         return out.slice(0, 300);
-    }, [snap, period, focus, sources, showBots]);
+    }, [snap, period, focus, sources, showBots, notes]);
 
     const byDay = useMemo(() => {
         const groups: { day: string; items: TLItem[] }[] = [];
@@ -870,6 +883,21 @@ function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus:
             {docs.length > LIST_CAP && <div className="poc-more">+{docs.length - LIST_CAP}개 더</div>}
         </div>
     );
+    const notesFor = (id: string) => notes.filter(nt => (nt.entity_ids || []).includes(id)).sort((a, b) => noteTime(b) - noteTime(a));
+    const noteList = (ns: Note[]) => (
+        <div className="poc-list">
+            <h4 className="poc-list-h poc-list-note">최근 기록 <span className="count">{ns.length}</span></h4>
+            {ns.length === 0 && <div className="poc-list-empty">없음</div>}
+            {ns.slice(0, LIST_CAP).map(nt => (
+                <div key={nt.id} className="poc-irow" onClick={() => nt.confluence_url && OpenURL(nt.confluence_url)}>
+                    <span className={`note-kind note-${nt.kind}`}>{nt.kind === 'call' ? '통화' : '회의'}</span>
+                    <span className="poc-isum">{nt.title || '(제목 없음)'}</span>
+                    <span className="poc-iass">{(nt.occurred_at || '').slice(0, 10)}</span>
+                </div>
+            ))}
+            {ns.length > LIST_CAP && <div className="poc-more">+{ns.length - LIST_CAP}개 더</div>}
+        </div>
+    );
 
     return (
         <div className="stats scroll">
@@ -917,6 +945,7 @@ function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus:
                             {issueList('지금 진행 중', 'prog', inprog)}
                             {issueList('남은 일', 'todo', todo)}
                             {docList(docs)}
+                            {noteList(notesFor(p.id))}
                         </div>
                     </section>
                 );
@@ -932,6 +961,8 @@ function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus:
                                 onClick={() => toggleSource('jira')}><Icon name="jira" size={12}/> Jira</button>
                         <button className={`pill pill-cf ${sources.has('confluence') ? 'pill-on' : ''}`}
                                 onClick={() => toggleSource('confluence')}><Icon name="confluence" size={12}/> Confluence</button>
+                        <button className={`pill pill-note ${sources.has('note') ? 'pill-on' : ''}`}
+                                onClick={() => toggleSource('note')}><Icon name="note" size={12}/> 기록</button>
                         <button className={`pill pill-bot ${showBots ? 'pill-on' : ''}`}
                                 title="CI/토큰봇 활동 표시" onClick={() => setShowBots(v => !v)}><Icon name="bot" size={12}/> 봇</button>
                     </div>
@@ -956,6 +987,24 @@ function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus:
                                                 <span className="time">{timeAgo(e.created_at)}</span>
                                             </div>
                                             <div className="event-desc">{describeEvent(e)}</div>
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            if (it.source === 'note') {
+                                const nt = it.note!;
+                                return (
+                                    <div key={it.id} className="event poc-row poc-ntrow" onClick={() => nt.confluence_url && OpenURL(nt.confluence_url)}>
+                                        <span className="badge poc-ntbadge"><Icon name="note" size={14}/></span>
+                                        <div className="event-body">
+                                            <div className="event-top">
+                                                {tag}
+                                                <span className={`note-kind note-${nt.kind}`}>{nt.kind === 'call' ? '통화' : '회의'}</span>
+                                                {nt.participants && <span className="poc-ntparts">{nt.participants}</span>}
+                                                {nt.confluence_url && <Icon name="confluence" size={11} className="poc-ntshared"/>}
+                                                <span className="time">{(nt.occurred_at || '').slice(0, 10)}</span>
+                                            </div>
+                                            <div className="event-desc">{nt.title || '(제목 없음)'}</div>
                                         </div>
                                     </div>
                                 );

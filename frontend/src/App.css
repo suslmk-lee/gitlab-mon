@@ -911,6 +911,7 @@ html, body, #root {
 .poc-list-prog::before { background: var(--orange); }
 .poc-list-todo::before { background: rgba(108, 182, 255, 0.7); }
 .poc-list-doc::before { background: #2dd4bf; }
+.poc-list-note::before { background: #f0883e; }
 .poc-list-h .count { font-weight: 400; }
 .poc-list-empty { color: var(--muted); font-size: 11.5px; padding: 4px 2px; }
 .poc-more { color: var(--muted); font-size: 11px; padding: 5px 2px 0; }
@@ -952,6 +953,11 @@ html, body, #root {
 .poc-cfrow { cursor: pointer; box-shadow: inset 2px 0 0 #2dd4bf; }
 .poc-cfbadge { background: rgba(45, 212, 191, 0.12); color: #2dd4bf; }
 .poc-cfspace { color: #2dd4bf; font-size: 11px; flex-shrink: 0; }
+.pill-on.pill-note { border-color: #f0883e; color: #f0883e; background: rgba(240, 136, 62, 0.12); box-shadow: 0 0 12px rgba(240, 136, 62, 0.2); }
+.poc-ntrow { cursor: pointer; box-shadow: inset 2px 0 0 #f0883e; }
+.poc-ntbadge { background: rgba(240, 136, 62, 0.12); color: #f0883e; }
+.poc-ntparts { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.poc-ntshared { color: #2dd4bf; flex-shrink: 0; }
 
 /* ---- 사용자 매핑 모달 ---- */
 .modal-wide { width: min(760px, 94vw); }
