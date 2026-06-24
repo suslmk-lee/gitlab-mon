@@ -48,7 +48,50 @@ html, body, #root {
     background: radial-gradient(circle, rgba(168, 85, 247, 0.22), transparent 70%);
 }
 
-.app { display: flex; flex-direction: column; height: 100vh; position: relative; z-index: 1; }
+.app { display: flex; flex-direction: row; height: 100vh; position: relative; z-index: 1; }
+
+/* ---- Sidebar (좌측 네비) ---- */
+.sidebar {
+    width: 210px; flex-shrink: 0;
+    display: flex; flex-direction: column;
+    background: rgba(255, 255, 255, 0.04);
+    backdrop-filter: blur(24px) saturate(1.6);
+    -webkit-backdrop-filter: blur(24px) saturate(1.6);
+    border-right: 1px solid var(--stroke);
+    --wails-draggable: drag;
+}
+.sidebar-brand { display: flex; align-items: center; gap: 9px; padding: 16px 16px 12px; }
+.sidebar-brand .dot { flex-shrink: 0; }
+.sidebar-brand h1 {
+    font-size: 16px; margin: 0; font-weight: 700; letter-spacing: -0.2px;
+    background: linear-gradient(90deg, #fff, #9ec9ff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+.nav-scroll { flex: 1; overflow-y: auto; padding: 6px 10px; --wails-draggable: no-drag; }
+.nav-group { margin-bottom: 14px; }
+.nav-group-label {
+    font-size: 10px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 8px; opacity: 0.65;
+}
+.nav-item {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 7px 9px; border-radius: 8px; border: none; background: none;
+    color: var(--muted); font-size: 13px; cursor: pointer; text-align: left;
+    transition: background 0.15s, color 0.15s;
+}
+.nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+.nav-item .icon { flex-shrink: 0; opacity: 0.85; }
+.nav-item.nav-on {
+    background: rgba(108, 182, 255, 0.14); color: var(--text); font-weight: 600;
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+.sidebar-foot {
+    padding: 11px 16px; border-top: 1px solid var(--stroke);
+    display: flex; flex-direction: column; gap: 3px; font-size: 11px;
+    --wails-draggable: no-drag;
+}
+.main-area { flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; }
 
 .loading, .empty {
     display: flex; align-items: center; justify-content: center;

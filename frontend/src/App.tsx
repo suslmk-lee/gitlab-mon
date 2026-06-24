@@ -51,6 +51,23 @@ interface Progress { phase: string; done: number; total: number }
 
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
+
+type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc';
+// 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
+const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
+    {label: '개발', items: [
+        {tab: 'feed', label: '활동 피드', icon: 'other'},
+        {tab: 'stats', label: '통계', icon: 'chart'},
+        {tab: 'ci', label: '파이프라인', icon: 'merge'},
+    ]},
+    {label: '업무', items: [
+        {tab: 'jira', label: 'Jira', icon: 'jira'},
+        {tab: 'weekly', label: '주간 리포트', icon: 'calendar'},
+    ]},
+    {label: '프로젝트', items: [
+        {tab: 'poc', label: 'PoC', icon: 'box'},
+    ]},
+];
 const periodCutoff = (p: Period) => Date.now() - p * 86_400_000;
 
 // ---- Helpers ----
@@ -101,6 +118,9 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     bot: <><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></>, // bot
     jira: <><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/></>, // square-check (Jira 이슈)
     confluence: <><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></>, // file-text (Confluence 문서)
+    chart: <><path d="M3 3v16a2 2 0 0 0 2 2h16"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></>, // bar-chart (통계)
+    calendar: <><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 2v4"/><path d="M16 2v4"/></>, // calendar (주간 리포트)
+    box: <><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></>, // box (프로젝트)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -1743,7 +1763,7 @@ const FEED_LIMIT = 300;
 function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
-    const [tab, setTab] = useState<'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc'>('feed');
+    const [tab, setTab] = useState<Tab>('feed');
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
@@ -1857,46 +1877,58 @@ function App() {
 
     return (
         <div className="app">
-            <header className="topbar">
-                <div className="brand">
+            <nav className="sidebar">
+                <div className="sidebar-brand">
                     <span className={`dot ${snap.error ? 'dot-red' : 'dot-green'}`} title={snap.error || '정상'}/>
                     <h1>Quantum Hub</h1>
+                </div>
+                <div className="nav-scroll">
+                    {NAV_GROUPS.map(g => (
+                        <div key={g.label} className="nav-group">
+                            <div className="nav-group-label">{g.label}</div>
+                            {g.items.map(it => (
+                                <button key={it.tab}
+                                        className={`nav-item ${tab === it.tab ? 'nav-on' : ''}`}
+                                        onClick={() => setTab(it.tab)}>
+                                    <Icon name={it.icon} size={15}/> <span>{it.label}</span>
+                                </button>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+                <div className="sidebar-foot">
                     <a className="instance" onClick={() => OpenURL(snap.gitlab_url)}>
                         {snap.gitlab_url.replace(/^https?:\/\//, '')}
                     </a>
                     {snap.version && <span className="version">v{snap.version.version}</span>}
-                    <nav className="tabs">
-                        <button className={tab === 'feed' ? 'tab tab-on' : 'tab'} onClick={() => setTab('feed')}>활동 피드</button>
-                        <button className={tab === 'stats' ? 'tab tab-on' : 'tab'} onClick={() => setTab('stats')}>통계</button>
-                        <button className={tab === 'ci' ? 'tab tab-on' : 'tab'} onClick={() => setTab('ci')}>파이프라인</button>
-                        <button className={tab === 'jira' ? 'tab tab-on' : 'tab'} onClick={() => setTab('jira')}>Jira</button>
-                        <button className={tab === 'weekly' ? 'tab tab-on' : 'tab'} onClick={() => setTab('weekly')}>주간 리포트</button>
-                        <button className={tab === 'poc' ? 'tab tab-on' : 'tab'} onClick={() => setTab('poc')}>PoC</button>
-                    </nav>
+                </div>
+            </nav>
+
+            <div className="main-area">
+                <header className="topbar">
                     <nav className="tabs">
                         {PERIODS.map(p => (
                             <button key={p} className={period === p ? 'tab tab-on' : 'tab'} onClick={() => setPeriod(p)}>{p}일</button>
                         ))}
                     </nav>
-                </div>
-                <div className="chips">
-                    {snap.stats && <>
-                        <StatChip label="프로젝트" value={snap.stats.projects}/>
-                        <StatChip label="그룹" value={snap.stats.groups}/>
-                        <StatChip label="사용자(활성)" value={`${snap.stats.users} (${snap.stats.active_users})`}/>
-                        <StatChip label="열린 MR" value={String(snap.open_mrs.length)}/>
-                    </>}
-                    <button className="refresh-btn" onClick={() => Refresh()}>↻ 새로고침</button>
-                    {progress
-                        ? <span className="fetched">{progress.phase} 수집 {progress.done}/{progress.total}</span>
-                        : <LastUpdated ts={snap.fetched_at}/>}
-                </div>
-            </header>
+                    <div className="chips">
+                        {snap.stats && <>
+                            <StatChip label="프로젝트" value={snap.stats.projects}/>
+                            <StatChip label="그룹" value={snap.stats.groups}/>
+                            <StatChip label="사용자(활성)" value={`${snap.stats.users} (${snap.stats.active_users})`}/>
+                            <StatChip label="열린 MR" value={String(snap.open_mrs.length)}/>
+                        </>}
+                        <button className="refresh-btn" onClick={() => Refresh()}>↻ 새로고침</button>
+                        {progress
+                            ? <span className="fetched">{progress.phase} 수집 {progress.done}/{progress.total}</span>
+                            : <LastUpdated ts={snap.fetched_at}/>}
+                    </div>
+                </header>
 
-            {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
-            {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
+                {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
+                {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-            {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <PoCView snap={snap} period={period}/> : (
+                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <PoCView snap={snap} period={period}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
@@ -1977,6 +2009,7 @@ function App() {
                 </aside>
             </main>
             )}
+            </div>
         </div>
     );
 }
