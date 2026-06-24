@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -38,6 +38,12 @@ interface ConfluencePage {
     id: string; title: string; space_key: string; space_name: string;
     author: string; created: string; updated: string; url: string; products: string[];
 }
+interface Note {
+    id: number; kind: string; title: string; occurred_at: string;
+    participants: string; entity_ids: string[]; summary: string;
+    decisions: string; action_items: string;
+    created_at: string; updated_at: string; confluence_id: string; confluence_url: string;
+}
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
@@ -53,7 +59,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'settings';
+type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -64,6 +70,9 @@ const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: strin
     {label: '업무', items: [
         {tab: 'jira', label: 'Jira', icon: 'jira'},
         {tab: 'weekly', label: '주간 리포트', icon: 'calendar'},
+    ]},
+    {label: '기록', items: [
+        {tab: 'records', label: '회의·통화', icon: 'note'},
     ]},
     // 거래처/프로젝트 그룹은 엔티티 레지스트리(snap.entities)로 동적 생성됨.
 ];
@@ -121,6 +130,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     calendar: <><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="M8 2v4"/><path d="M16 2v4"/></>, // calendar (주간 리포트)
     box: <><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></>, // box (프로젝트)
     gear: <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>, // settings (설정)
+    note: <><path d="M2 6h3"/><path d="M2 10h3"/><path d="M2 14h3"/><path d="M2 18h3"/><rect width="16" height="20" x="5" y="2" rx="2"/><path d="M9.5 8h5"/><path d="M9.5 12h5"/><path d="M9.5 16H14"/></>, // notebook (기록)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -1759,6 +1769,133 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
     );
 }
 
+// ---- 기록: 회의/통화 노트 ----
+function blankNote(): Note {
+    return {id: 0, kind: 'meeting', title: '', occurred_at: new Date().toISOString().slice(0, 10),
+        participants: '', entity_ids: [], summary: '', decisions: '', action_items: '',
+        created_at: '', updated_at: '', confluence_id: '', confluence_url: ''};
+}
+
+function NoteEditor({note, entities, onClose, onSaved}: {
+    note: Note; entities: Entity[]; onClose: () => void; onSaved: () => void;
+}) {
+    const [n, setN] = useState<Note>(note);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState('');
+    const set = (patch: Partial<Note>) => setN(prev => ({...prev, ...patch}));
+    const toggleEntity = (id: string) => set({entity_ids: n.entity_ids.includes(id) ? n.entity_ids.filter(x => x !== id) : [...n.entity_ids, id]});
+
+    const save = async () => {
+        if (!n.title.trim()) { setErr('제목을 입력하세요'); return; }
+        setSaving(true); setErr('');
+        const r: any = await SaveNote(n);
+        setSaving(false);
+        if (r?.error) { setErr(r.error); return; }
+        onSaved();
+    };
+    const del = async () => {
+        if (!n.id) { onClose(); return; }
+        await DeleteNote(n.id);
+        onSaved();
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+                <div className="modal-head">
+                    <div className="tabs">
+                        {(['meeting', 'call'] as const).map(k => (
+                            <button key={k} className={n.kind === k ? 'tab tab-on' : 'tab'} onClick={() => set({kind: k})}>
+                                {k === 'meeting' ? '회의' : '통화'}
+                            </button>
+                        ))}
+                    </div>
+                    <span className="hint">{n.id ? `기록 #${n.id}` : '새 기록'}</span>
+                    <button className="modal-x" onClick={onClose}>✕</button>
+                </div>
+                <input className="ent-in note-title-in" placeholder="제목" value={n.title} onChange={e => set({title: e.target.value})}/>
+                <div className="note-form-row">
+                    <label className="ent-field">일시<input className="ent-in" type="date" value={(n.occurred_at || '').slice(0, 10)} onChange={e => set({occurred_at: e.target.value})}/></label>
+                    <label className="ent-field note-grow">참석자 / 상대<input className="ent-in" placeholder="이름, ..." value={n.participants} onChange={e => set({participants: e.target.value})}/></label>
+                </div>
+                <div className="ent-field">거래처 / 프로젝트
+                    <div className="poc-pills">
+                        {entities.filter(e => e.active).map(e => (
+                            <button key={e.id}
+                                    className={`pill ${n.entity_ids.includes(e.id) ? 'pill-on' : ''}`}
+                                    style={n.entity_ids.includes(e.id) ? {borderColor: e.accent || 'var(--accent)', color: e.accent || 'var(--accent)'} : undefined}
+                                    onClick={() => toggleEntity(e.id)}>{e.name}</button>
+                        ))}
+                        {entities.length === 0 && <span className="hint">설정에서 거래처/프로젝트를 먼저 등록하세요</span>}
+                    </div>
+                </div>
+                <label className="ent-field">요약<textarea className="ent-in note-area" value={n.summary} onChange={e => set({summary: e.target.value})}/></label>
+                <label className="ent-field">결정 사항<textarea className="ent-in note-area" value={n.decisions} onChange={e => set({decisions: e.target.value})}/></label>
+                <label className="ent-field">액션 아이템<textarea className="ent-in note-area" value={n.action_items} onChange={e => set({action_items: e.target.value})}/></label>
+                {err && <div className="warn-banner">⚠ {err}</div>}
+                <div className="modal-actions">
+                    {n.id ? <button className="map-del" title="삭제" onClick={del}>삭제</button> : <span/>}
+                    <span style={{flex: 1}}/>
+                    <button className="btn btn-sm" onClick={onClose}>취소</button>
+                    <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '저장'}</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function RecordsView({snap}: { snap: Snapshot }) {
+    const [notes, setNotes] = useState<Note[] | null>(null);
+    const [editing, setEditing] = useState<Note | null>(null);
+    const [kindFilter, setKindFilter] = useState<'all' | 'meeting' | 'call'>('all');
+    const reload = () => ListNotes('').then((ns: any) => setNotes(ns || []));
+    useEffect(() => { reload(); }, []);
+
+    const entName = (id: string) => snap.entities.find(e => e.id === id)?.name || id;
+    const entAcc = (id: string) => snap.entities.find(e => e.id === id)?.accent || 'var(--accent)';
+    const list = (notes || []).filter(n => kindFilter === 'all' || n.kind === kindFilter);
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>기록</h2>
+                <div className="tabs">
+                    {(['all', 'meeting', 'call'] as const).map(k => (
+                        <button key={k} className={kindFilter === k ? 'tab tab-on' : 'tab'} onClick={() => setKindFilter(k)}>
+                            {k === 'all' ? '전체' : k === 'meeting' ? '회의' : '통화'}
+                        </button>
+                    ))}
+                </div>
+                <button className="btn btn-sm" onClick={() => setEditing(blankNote())}>+ 새 기록</button>
+            </div>
+
+            {!notes && <section className="stat-block"><div className="empty">불러오는 중…</div></section>}
+            {notes && list.length === 0 && <section className="stat-block"><div className="empty">기록이 없습니다 — '+ 새 기록'으로 추가하세요</div></section>}
+            {list.map(n => (
+                <section key={n.id} className="stat-block note-card" onClick={() => setEditing(n)}>
+                    <div className="note-head">
+                        <span className={`note-kind note-${n.kind}`}>{n.kind === 'call' ? '통화' : '회의'}</span>
+                        <b className="note-title">{n.title || '(제목 없음)'}</b>
+                        {n.confluence_url && <span className="note-shared" title="Confluence 공유됨">🔗</span>}
+                        <span className="time">{(n.occurred_at || '').slice(0, 10)}</span>
+                    </div>
+                    {((n.entity_ids || []).length > 0 || n.participants) && (
+                        <div className="note-tags">
+                            {(n.entity_ids || []).map(id => (
+                                <span key={id} className="poc-ptag" style={{borderColor: entAcc(id), color: entAcc(id)}}>{entName(id)}</span>
+                            ))}
+                            {n.participants && <span className="note-parts">{n.participants}</span>}
+                        </div>
+                    )}
+                    {n.summary && <div className="note-snippet">{n.summary}</div>}
+                </section>
+            ))}
+
+            {editing && <NoteEditor note={editing} entities={snap.entities} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }}/>}
+        </div>
+    );
+}
+
 // ---- 설정: 거래처/프로젝트(엔티티) 레지스트리 관리 ----
 const ACCENTS = [
     {label: '파랑', val: 'var(--accent)'}, {label: '보라', val: 'var(--purple)'},
@@ -2030,7 +2167,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'settings' ? <SettingsView/> : (
+                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
