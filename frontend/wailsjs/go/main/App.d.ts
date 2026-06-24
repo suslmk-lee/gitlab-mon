@@ -37,6 +37,8 @@ export function SaveNote(arg1:main.Note):Promise<main.NoteResult>;
 
 export function ShareNote(arg1:number,arg2:string):Promise<main.NoteResult>;
 
+export function SummarizeNote(arg1:main.Note):Promise<main.NoteAI>;
+
 export function SummarizeWeek(arg1:string,arg2:number):Promise<string>;
 
 export function WeeklyReport(arg1:string,arg2:number):Promise<main.WeekReport>;

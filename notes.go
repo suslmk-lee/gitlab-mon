@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"html"
 	"os"
@@ -296,6 +297,62 @@ func (a *App) ShareNote(id int64, spaceKey string) NoteResult {
 	n.ConfluenceID = ref.ID
 	n.ConfluenceURL = ref.URL
 	return a.SaveNote(n) // confluence_id/url 영속화
+}
+
+// NoteAI is the structured result of AI tidy-up (for the editor to populate).
+type NoteAI struct {
+	Summary     string `json:"summary"`
+	Decisions   string `json:"decisions"`
+	ActionItems string `json:"action_items"`
+	Error       string `json:"error"`
+}
+
+// extractJSON pulls the first {...} object from an LLM response (strips fences/prose).
+func extractJSON(s string) string {
+	s = strings.TrimSpace(s)
+	if i, j := strings.IndexByte(s, '{'), strings.LastIndexByte(s, '}'); i >= 0 && j > i {
+		return s[i : j+1]
+	}
+	return s
+}
+
+// SummarizeNote sends the note's raw content to Claude and returns a cleaned
+// summary + extracted decisions/action items for the editor to review.
+func (a *App) SummarizeNote(n Note) NoteAI {
+	a.mu.Lock()
+	apiKey := a.cfg.AnthropicKey
+	a.mu.Unlock()
+	if apiKey == "" {
+		return NoteAI{Error: "ANTHROPIC_API_KEY가 설정되지 않았습니다 (env.local 또는 Keychain)"}
+	}
+	raw := strings.TrimSpace(strings.Join([]string{n.Summary, n.Decisions, n.ActionItems}, "\n"))
+	if raw == "" {
+		return NoteAI{Error: "정리할 내용이 없습니다 — 요약 칸에 메모를 입력하세요"}
+	}
+	kind := "회의"
+	if n.Kind == "call" {
+		kind = "통화"
+	}
+	ctx := ""
+	if n.Participants != "" {
+		ctx = " (참석자: " + n.Participants + ")"
+	}
+	prompt := fmt.Sprintf("다음은 %s 메모입니다%s. 한국어로 정리해서 아래 JSON 객체만 출력하세요. "+
+		"코드펜스나 설명 없이 JSON만 출력:\n"+
+		`{"summary":"핵심 2~4문장 요약","decisions":"결정 사항을 '- ' 불릿으로(없으면 빈 문자열)","action_items":"액션 아이템을 '- ' 불릿으로, 담당자/기한 있으면 포함(없으면 빈 문자열)"}`+
+		"\n\n메모:\n%s", kind, ctx, raw)
+
+	txt, err := claudeComplete(apiKey, prompt, 1200)
+	if err != nil {
+		return NoteAI{Error: err.Error()}
+	}
+	var r NoteAI
+	if json.Unmarshal([]byte(extractJSON(txt)), &r) != nil {
+		// 파싱 실패 시 원문을 요약 칸에 넣어 사용자가 직접 정리하도록
+		return NoteAI{Summary: strings.TrimSpace(txt)}
+	}
+	r.Error = ""
+	return r
 }
 
 // DeleteNote removes a note and its entity links. Returns "" on success.

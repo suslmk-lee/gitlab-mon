@@ -681,6 +681,24 @@ export namespace main {
 	        this.confluence_url = source["confluence_url"];
 	    }
 	}
+	export class NoteAI {
+	    summary: string;
+	    decisions: string;
+	    action_items: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new NoteAI(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.summary = source["summary"];
+	        this.decisions = source["decisions"];
+	        this.action_items = source["action_items"];
+	        this.error = source["error"];
+	    }
+	}
 	export class NoteResult {
 	    note: Note;
 	    error: string;

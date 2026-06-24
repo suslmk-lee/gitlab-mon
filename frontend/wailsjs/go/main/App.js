@@ -70,6 +70,10 @@ export function ShareNote(arg1, arg2) {
   return window['go']['main']['App']['ShareNote'](arg1, arg2);
 }
 
+export function SummarizeNote(arg1) {
+  return window['go']['main']['App']['SummarizeNote'](arg1);
+}
+
 export function SummarizeWeek(arg1, arg2) {
   return window['go']['main']['App']['SummarizeWeek'](arg1, arg2);
 }

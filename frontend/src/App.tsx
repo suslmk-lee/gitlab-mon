@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -1865,6 +1865,15 @@ function NoteEditor({note, entities, onClose, onReload}: {
         onReload();
         onClose();
     };
+    const [aiBusy, setAiBusy] = useState(false);
+    const aiTidy = async () => {
+        setAiBusy(true); setErr(''); setOk('');
+        const r: any = await SummarizeNote(n);
+        setAiBusy(false);
+        if (r?.error) { setErr(r.error); return; }
+        set({summary: r.summary || n.summary, decisions: r.decisions || n.decisions, action_items: r.action_items || n.action_items});
+        setOk('AI 정리 완료 — 검토 후 저장하세요');
+    };
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -1878,6 +1887,8 @@ function NoteEditor({note, entities, onClose, onReload}: {
                         ))}
                     </div>
                     <span className="hint">{n.id ? `기록 #${n.id}` : '새 기록'}</span>
+                    <span style={{flex: 1}}/>
+                    <button className="btn btn-sm" onClick={aiTidy} disabled={aiBusy} title="요약 칸의 메모를 AI가 요약·결정·액션으로 정리">{aiBusy ? '정리 중…' : '✨ AI 정리'}</button>
                     <button className="modal-x" onClick={onClose}>✕</button>
                 </div>
                 <input className="ent-in note-title-in" placeholder="제목" value={n.title} onChange={e => set({title: e.target.value})}/>
@@ -1940,12 +1951,17 @@ function RecordsView({snap}: { snap: Snapshot }) {
     const [notes, setNotes] = useState<Note[] | null>(null);
     const [editing, setEditing] = useState<Note | null>(null);
     const [kindFilter, setKindFilter] = useState<'all' | 'meeting' | 'call'>('all');
+    const [query, setQuery] = useState('');
     const reload = () => ListNotes('').then((ns: any) => setNotes(ns || []));
     useEffect(() => { reload(); }, []);
 
     const entName = (id: string) => snap.entities.find(e => e.id === id)?.name || id;
     const entAcc = (id: string) => snap.entities.find(e => e.id === id)?.accent || 'var(--accent)';
-    const list = (notes || []).filter(n => kindFilter === 'all' || n.kind === kindFilter);
+    const q = query.trim().toLowerCase();
+    const list = (notes || [])
+        .filter(n => kindFilter === 'all' || n.kind === kindFilter)
+        .filter(n => !q || [n.title, n.summary, n.decisions, n.action_items, n.participants,
+            ...(n.entity_ids || []).map(entName)].join(' ').toLowerCase().includes(q));
 
     return (
         <div className="stats scroll">
@@ -1958,6 +1974,7 @@ function RecordsView({snap}: { snap: Snapshot }) {
                         </button>
                     ))}
                 </div>
+                <input className="search" placeholder="제목·내용·참석자·엔티티 검색" value={query} onChange={e => setQuery(e.target.value)}/>
                 <button className="btn btn-sm" onClick={() => setEditing(blankNote())}>+ 새 기록</button>
             </div>
 
