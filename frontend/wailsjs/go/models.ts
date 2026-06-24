@@ -482,6 +482,24 @@ export namespace jira {
 
 export namespace main {
 	
+	export class AIConfig {
+	    provider: string;
+	    model: string;
+	    base_url: string;
+	    has_key: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AIConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.provider = source["provider"];
+	        this.model = source["model"];
+	        this.base_url = source["base_url"];
+	        this.has_key = source["has_key"];
+	    }
+	}
 	export class AliasEntry {
 	    key: string;
 	    username: string;

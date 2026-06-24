@@ -10,6 +10,10 @@ export function DeleteNote(arg1) {
   return window['go']['main']['App']['DeleteNote'](arg1);
 }
 
+export function GetAIConfig() {
+  return window['go']['main']['App']['GetAIConfig']();
+}
+
 export function GetAuthorMappings() {
   return window['go']['main']['App']['GetAuthorMappings']();
 }
@@ -44,6 +48,10 @@ export function OpenURL(arg1) {
 
 export function Refresh() {
   return window['go']['main']['App']['Refresh']();
+}
+
+export function SaveAIConfig(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveAIConfig'](arg1, arg2, arg3, arg4);
 }
 
 export function SaveAuthorMappings(arg1) {

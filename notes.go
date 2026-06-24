@@ -332,10 +332,10 @@ type NoteAI struct {
 // structured Korean text for the editor to review (single content box).
 func (a *App) SummarizeNote(n Note) NoteAI {
 	a.mu.Lock()
-	apiKey := a.cfg.AnthropicKey
+	cfg := a.cfg
 	a.mu.Unlock()
-	if apiKey == "" {
-		return NoteAI{Error: "ANTHROPIC_API_KEY가 설정되지 않았습니다 (env.local 또는 Keychain)"}
+	if cfg.AIKey == "" {
+		return NoteAI{Error: "AI API 키가 없습니다 — 설정 → AI에서 등록하세요"}
 	}
 	raw := strings.TrimSpace(n.Summary)
 	if raw == "" {
@@ -354,7 +354,7 @@ func (a *App) SummarizeNote(n Note) NoteAI {
 		"있으면 '결정 사항', '액션 아이템' 소제목과 '- ' 불릿으로 이어서 정리하세요. 원문에 없는 내용은 만들지 마세요.\n\n메모:\n%s",
 		kind, ctx, raw)
 
-	txt, err := claudeComplete(apiKey, prompt, 1200)
+	txt, err := aiComplete(cfg.AIProvider, cfg.AIModel, cfg.AIBaseURL, cfg.AIKey, prompt, 1200)
 	if err != nil {
 		return NoteAI{Error: err.Error()}
 	}

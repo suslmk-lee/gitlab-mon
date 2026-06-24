@@ -172,14 +172,14 @@ func (a *App) WeeklyReport(username string, offset int) WeekReport {
 
 	a.mu.Lock()
 	users := a.lastUsers
-	apiKey := a.cfg.AnthropicKey
+	hasAI := a.cfg.AIKey != ""
 	// 프로젝트 메타(경로/URL)
 	projMeta := map[int]gitlab.Project{}
 	for _, p := range a.snap.Projects {
 		projMeta[p.ID] = p
 	}
 	a.mu.Unlock()
-	rep.HasAIKey = apiKey != ""
+	rep.HasAIKey = hasAI
 	resolve := buildUserResolver(users, a.aliasesSnapshot())
 
 	inWeek := func(t time.Time) bool { return !t.Before(start) && t.Before(end) }
@@ -289,14 +289,15 @@ func (a *App) WeeklyReport(username string, offset int) WeekReport {
 	return rep
 }
 
-// SummarizeWeek sends the structured report to the Claude API and returns a
-// Korean prose weekly summary. Requires ANTHROPIC_API_KEY.
+// SummarizeWeek sends the week's commit/MR activity to the configured AI provider
+// and returns a Korean weekly report + per-day work log (markdown).
 func (a *App) SummarizeWeek(username string, offset int) string {
 	a.mu.Lock()
-	apiKey := a.cfg.AnthropicKey
+	cfg := a.cfg
+	users := a.lastUsers
 	a.mu.Unlock()
-	if apiKey == "" {
-		return "ERR:ANTHROPIC_API_KEY가 설정되지 않았습니다 (env.local 또는 Keychain)"
+	if cfg.AIKey == "" {
+		return "ERR:AI API 키가 없습니다 — 설정 → AI에서 등록하세요"
 	}
 
 	rep := a.WeeklyReport(username, offset)
@@ -304,11 +305,27 @@ func (a *App) SummarizeWeek(username string, offset int) string {
 		return "ERR:" + rep.Error
 	}
 
-	// 보고서를 텍스트로 직렬화
+	start, end := weekRange(offset)
+	inWeek := func(t time.Time) bool { return !t.Before(start) && t.Before(end) }
+	resolve := buildUserResolver(users, a.aliasesSnapshot())
+
+	// 일자별 커밋 제목 수집 (일간 업무 내역용)
+	dayMsgs := map[string][]string{}
+	a.mu.Lock()
+	for _, c := range a.commitCache {
+		for _, cm := range c.Commits {
+			if cm.Title != "" && inWeek(cm.CreatedAt) && resolve(cm.AuthorName, cm.AuthorEmail) == username {
+				d := cm.CreatedAt.Local().Format("2006-01-02")
+				dayMsgs[d] = append(dayMsgs[d], cm.Title)
+			}
+		}
+	}
+	a.mu.Unlock()
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "사용자: %s\n기간: %s ~ %s\n", rep.Username, rep.WeekStart, rep.WeekEnd)
-	fmt.Fprintf(&b, "전체: 커밋 %d, +%d/-%d 라인, 머지 %d, MR생성 %d\n\n",
-		rep.TotalCommits, rep.TotalAdd, rep.TotalDel, rep.MergedCount, rep.OpenedCount)
+	fmt.Fprintf(&b, "사용자: %s\n기간: %s ~ %s\n전체: 커밋 %d, +%d/-%d 라인, 머지 %d, MR생성 %d\n\n",
+		rep.Username, rep.WeekStart, rep.WeekEnd, rep.TotalCommits, rep.TotalAdd, rep.TotalDel, rep.MergedCount, rep.OpenedCount)
+	b.WriteString("# 프로젝트별 활동\n")
 	for _, p := range rep.Projects {
 		fmt.Fprintf(&b, "## %s (커밋 %d, +%d/-%d)\n", p.Path, p.CommitCount, p.Add, p.Del)
 		for _, m := range p.MergedMRs {
@@ -322,13 +339,23 @@ func (a *App) SummarizeWeek(username string, offset int) string {
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString("# 일자별 커밋\n")
+	for i := 0; i < 7; i++ {
+		d := start.AddDate(0, 0, i).Format("2006-01-02")
+		if msgs := dayMsgs[d]; len(msgs) > 0 {
+			fmt.Fprintf(&b, "## %s\n", d)
+			for _, m := range msgs {
+				fmt.Fprintf(&b, "- %s\n", m)
+			}
+		}
+	}
 
-	prompt := "다음은 한 개발자의 일주일치 git/MR 활동 데이터입니다. 이를 바탕으로 " +
-		"한국어로 주간 업무 보고서를 작성하세요. 프로젝트별로 무슨 작업을 했는지 " +
-		"기능 단위로 묶어 3~6개의 불릿으로 요약하고, 맨 위에 2~3문장 총평을 넣으세요. " +
-		"커밋 메시지의 prefix(feat/fix 등)와 내용을 해석해 자연스러운 업무 서술로 바꾸세요.\n\n" + b.String()
+	prompt := "다음은 한 개발자의 일주일치 git/MR 활동 데이터입니다. 한국어로 아래 두 부분을 마크다운으로 정리하세요.\n\n" +
+		"## 주간 업무 보고\n맨 위 2~3문장 총평 후, 프로젝트·기능 단위로 무슨 일을 했는지 3~6개 불릿. 커밋 prefix(feat/fix 등)와 내용을 자연스러운 업무 서술로 해석.\n\n" +
+		"## 일간 업무 내역\n'일자별 커밋'을 바탕으로 날짜별(YYYY-MM-DD)로 그날 한 일을 1~3개 불릿으로 요약. 커밋 없는 날은 생략.\n\n" +
+		"원문에 없는 내용은 지어내지 마세요.\n\n---\n" + b.String()
 
-	txt, err := claudeComplete(apiKey, prompt, 1500)
+	txt, err := aiComplete(cfg.AIProvider, cfg.AIModel, cfg.AIBaseURL, cfg.AIKey, prompt, 2000)
 	if err != nil {
 		return "ERR:" + err.Error()
 	}

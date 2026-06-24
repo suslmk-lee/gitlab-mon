@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -1739,7 +1739,7 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
                     {users.map(u => <option key={u} value={u}>{u}</option>)}
                 </select>
                 <div className="tabs">
-                    {[1, 2, 0].map(o => (
+                    {[0, 1, 2, 3].map(o => (
                         <button key={o} className={offset === o ? 'tab tab-on' : 'tab'} onClick={() => setOffset(o)}>
                             {o === 0 ? '이번 주' : o === 1 ? '지난 주' : `${o}주 전`}
                         </button>
@@ -1774,7 +1774,7 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
                             <h3>✨ AI 요약</h3>
                             {summary.startsWith('ERR:')
                                 ? <div className="error-banner">{summary.slice(4)}</div>
-                                : <pre className="ai-summary">{summary}</pre>}
+                                : <div className="ai-summary"><Markdown text={summary}/></div>}
                         </section>
                     )}
 
@@ -2093,6 +2093,55 @@ function RecordsView({snap}: { snap: Snapshot }) {
 }
 
 // ---- 설정: 거래처/프로젝트(엔티티) 레지스트리 관리 ----
+const AI_PROVIDERS = [
+    {id: 'anthropic', label: 'Claude (Anthropic)'},
+    {id: 'openai', label: 'OpenAI'},
+    {id: 'gemini', label: 'Gemini (Google)'},
+    {id: 'minimax', label: 'MiniMax'},
+    {id: 'custom', label: '사용자 지정 (OpenAI 호환)'},
+];
+
+function AISettings() {
+    const [c, setC] = useState<{ provider: string; model: string; base_url: string; has_key: boolean } | null>(null);
+    const [key, setKey] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState('');
+    const load = () => GetAIConfig().then((x: any) => setC(x));
+    useEffect(() => { load(); }, []);
+    if (!c) return null;
+    const set = (p: Partial<typeof c>) => { setC({...c, ...p}); setMsg(''); };
+    const save = async () => {
+        setSaving(true); setMsg('');
+        const r: any = await SaveAIConfig(c.provider, c.model, c.base_url, key);
+        setSaving(false);
+        setKey('');
+        load();
+        setMsg(r || '저장되었습니다 ✓');
+    };
+    return (
+        <section className="stat-block">
+            <h3>AI 설정</h3>
+            <p className="hint">주간 리포트 요약·기록 AI 정리에 쓸 제공자와 API 키. 키는 OS 키체인에 저장됩니다.</p>
+            <div className="ent-grid">
+                <label className="ent-field">제공자
+                    <select className="jselect" value={c.provider} onChange={e => set({provider: e.target.value})}>
+                        {AI_PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                    </select>
+                </label>
+                <label className="ent-field">모델<input className="ent-in" placeholder="(제공자 기본값)" value={c.model} onChange={e => set({model: e.target.value})}/></label>
+                {c.provider === 'custom' && <label className="ent-field">Base URL<input className="ent-in" placeholder="http://host/v1" value={c.base_url} onChange={e => set({base_url: e.target.value})}/></label>}
+                <label className="ent-field">API 키<input className="ent-in" type="password" placeholder={c.has_key ? '설정됨 — 변경 시에만 입력' : '키 입력'} value={key} onChange={e => setKey(e.target.value)}/></label>
+            </div>
+            <div className="ent-actions">
+                {c.has_key && <span className="hint">✓ 키 설정됨</span>}
+                <span style={{flex: 1}}/>
+                {msg && <span className="hint">{msg}</span>}
+                <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '저장'}</button>
+            </div>
+        </section>
+    );
+}
+
 const ACCENTS = [
     {label: '파랑', val: 'var(--accent)'}, {label: '보라', val: 'var(--purple)'},
     {label: '초록', val: 'var(--green)'}, {label: '주황', val: 'var(--orange)'}, {label: '빨강', val: 'var(--red)'},
@@ -2126,9 +2175,13 @@ function SettingsView() {
     return (
         <div className="stats scroll">
             <div className="board-head">
-                <h2>설정 — 거래처 / 프로젝트</h2>
+                <h2>설정</h2>
                 <button className="btn btn-sm" onClick={() => setMapping(true)}>⚙ 사용자 매핑</button>
             </div>
+
+            <AISettings/>
+
+            <h3 className="settings-sub">거래처 / 프로젝트</h3>
             <p className="hint">엔티티는 GitLab 그룹·Jira 키·Confluence 검색어로 활동을 모읍니다. 여러 개는 쉼표로 입력. 저장하면 사이드바·허브에 반영됩니다.</p>
             {list.map((e, i) => (
                 <section key={i} className="stat-block ent-card" style={{borderLeft: `3px solid ${e.accent || 'var(--accent)'}`}}>

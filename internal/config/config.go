@@ -14,7 +14,12 @@ type Config struct {
 	JiraURL      string `json:"jira_url,omitempty"`
 	JiraEmail    string `json:"jira_email,omitempty"`
 	JiraToken    string `json:"jira_token,omitempty"` // 디스크에는 저장하지 않음 (Keychain 사용)
-	AnthropicKey string `json:"-"`                    // AI 요약용 (env/keychain only, 디스크 미저장)
+	AnthropicKey string `json:"-"`                    // 구버전 호환 (env ANTHROPIC_API_KEY / keychain "anthropic")
+	// AI 제공자 설정 (provider/model/baseURL은 config.json, 키는 keychain "ai:<provider>")
+	AIProvider string `json:"ai_provider,omitempty"` // anthropic|openai|gemini|minimax|custom
+	AIModel    string `json:"ai_model,omitempty"`    // 비우면 제공자 기본 모델
+	AIBaseURL  string `json:"ai_base_url,omitempty"` // custom(OpenAI 호환) 베이스 URL
+	AIKey      string `json:"-"`                     // 선택된 제공자의 API 키 (keychain)
 }
 
 const defaultURL = "https://ci.quantumcns.ai"
@@ -87,9 +92,35 @@ func Load() Config {
 	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
 		cfg.AnthropicKey = v
 	}
+	if v := os.Getenv("AI_PROVIDER"); v != "" {
+		cfg.AIProvider = v
+	}
+	if v := os.Getenv("AI_MODEL"); v != "" {
+		cfg.AIModel = v
+	}
+	if v := os.Getenv("AI_BASE_URL"); v != "" {
+		cfg.AIBaseURL = v
+	}
+	if v := os.Getenv("AI_API_KEY"); v != "" {
+		cfg.AIKey = v
+	}
+
+	// AI 제공자 기본값 + 키 로드 (provider 확정 후). 키체인 계정은 "ai:<provider>".
+	if cfg.AIProvider == "" {
+		cfg.AIProvider = "anthropic"
+	}
+	if keychainAvailable() && cfg.AIKey == "" {
+		if t, ok := keychainGet("ai:" + cfg.AIProvider); ok {
+			cfg.AIKey = t
+		}
+	}
+	if cfg.AIKey == "" && cfg.AIProvider == "anthropic" {
+		cfg.AIKey = cfg.AnthropicKey // 구버전 anthropic 키 재사용
+	}
 
 	cfg.GitLabURL = strings.TrimRight(cfg.GitLabURL, "/")
 	cfg.JiraURL = strings.TrimRight(cfg.JiraURL, "/")
+	cfg.AIBaseURL = strings.TrimRight(cfg.AIBaseURL, "/")
 	return cfg
 }
 
@@ -108,8 +139,11 @@ func Save(cfg Config) error {
 		if cfg.AnthropicKey != "" {
 			_ = keychainSet("anthropic", cfg.AnthropicKey)
 		}
+		if cfg.AIKey != "" && cfg.AIProvider != "" {
+			_ = keychainSet("ai:"+cfg.AIProvider, cfg.AIKey)
+		}
 	}
-	// AnthropicKey는 json:"-" 라 파일에 안 써짐
+	// AnthropicKey/AIKey는 json:"-" 라 파일에 안 써짐 (provider/model/baseURL만 저장)
 	return writeConfigFile(onDisk)
 }
 

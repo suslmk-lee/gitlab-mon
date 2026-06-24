@@ -7,6 +7,8 @@ export function ConfluenceSpaces():Promise<Array<confluence.Space>>;
 
 export function DeleteNote(arg1:number):Promise<string>;
 
+export function GetAIConfig():Promise<main.AIConfig>;
+
 export function GetAuthorMappings():Promise<main.AuthorMappingData>;
 
 export function GetConfig():Promise<Record<string, any>>;
@@ -24,6 +26,8 @@ export function ListNotes(arg1:string):Promise<Array<main.Note>>;
 export function OpenURL(arg1:string):Promise<void>;
 
 export function Refresh():Promise<void>;
+
+export function SaveAIConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
 
 export function SaveAuthorMappings(arg1:Array<main.AliasEntry>):Promise<string>;
 
