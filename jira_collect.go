@@ -175,6 +175,13 @@ func (a *App) aggregateJira() []jira.Issue {
 		out = append(out, *is)
 	}
 	a.mu.Unlock()
-	sort.Slice(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	// 동일 Updated일 때 Key로 안정 정렬 — 맵 순회 무작위성으로 순서가 흔들려
+	// 시그니처가 매번 바뀌고 불필요하게 재발행되는 것을 방지.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].Updated.Equal(out[j].Updated) {
+			return out[i].Updated.After(out[j].Updated)
+		}
+		return out[i].Key < out[j].Key
+	})
 	return out
 }

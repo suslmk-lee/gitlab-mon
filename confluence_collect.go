@@ -60,7 +60,7 @@ func (a *App) saveConfluenceCache() {
 // collectConfluence does a full per-product CQL fetch of pages modified within
 // the window (slow-cycle only, ~2 calls of ≤100 small results). Pages are keyed
 // by id and tagged with every product whose query matched.
-func (a *App) collectConfluence(client *confluence.Client, since time.Time) error {
+func (a *App) collectConfluence(client *confluence.Client) error {
 	fresh := map[string]*confluence.Page{}
 	var firstErr error
 	for _, prod := range confluenceProducts {
@@ -85,14 +85,11 @@ func (a *App) collectConfluence(client *confluence.Client, since time.Time) erro
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	// 일부라도 실패하면 기존 캐시 유지(부분 결과로 덮어쓰지 않음). 전부 성공했지만
-	// 빈 결과인데 기존에 문서가 있었다면(일시적 인덱싱 공백·이름 불일치) 역시 유지 —
-	// 모든 문서가 한 번에 사라지는 일은 드물고, 실제 변경 시 다음 주기에 정정된다.
+	// 실패 시에만 기존 캐시 유지. 전부 성공한 결과는 — 빈 결과라도 — 권위 있는
+	// 현재 상태로 신뢰해 그대로 교체한다(삭제·이름변경으로 매칭에서 빠진 문서가
+	// 즉시 사라지도록). 일시적 빈-200은 드물고 다음 주기에 자가복구된다.
 	if firstErr != nil {
 		return firstErr
-	}
-	if len(fresh) == 0 && len(a.confluenceCache) > 0 {
-		return nil
 	}
 	a.confluenceCache = fresh
 	a.confluenceFetchedAt = time.Now()

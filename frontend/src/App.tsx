@@ -797,7 +797,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                 .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime()));
         }
         return m;
-    }, [snap, period]);
+    }, [snap.confluence_pages, period]);
 
     const modal = selected &&
         <IssueModal issueKey={selected} issues={snap.jira_issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;

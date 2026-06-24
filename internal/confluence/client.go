@@ -63,7 +63,8 @@ func (t *cfTime) UnmarshalJSON(b []byte) error {
 	if s == "" || s == "null" {
 		return nil
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999-0700", "2006-01-02T15:04:05Z0700", "2006-01-02"} {
+	// Atlassian이 쓰는 실제 포맷만 — date-only는 자정 UTC로 왜곡되므로 제외.
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05.999-0700", "2006-01-02T15:04:05Z0700"} {
 		if parsed, err := time.Parse(layout, s); err == nil {
 			t.Time = parsed
 			return nil

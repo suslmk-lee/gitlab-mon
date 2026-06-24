@@ -352,7 +352,9 @@ func (a *App) refresh() {
 	a.mu.Unlock()
 	if jc != nil && slow {
 		if err := a.collectJira(jc, since); err != nil {
-			auxWarnings = append(auxWarnings, "Jira 동기화 실패: "+err.Error())
+			// 고정 문구 — raw err(가변 내용)가 snap.Warning→snapshotSig에 섞여
+			// 매 사이클 재발행을 유발하지 않도록.
+			auxWarnings = append(auxWarnings, "Jira 동기화 실패 (이전 데이터 유지, 다음 주기 재시도)")
 		}
 	}
 	jiraIssues := a.aggregateJira()
@@ -362,8 +364,8 @@ func (a *App) refresh() {
 	cc := a.confluenceClient
 	a.mu.Unlock()
 	if cc != nil && slow {
-		if err := a.collectConfluence(cc, since); err != nil {
-			auxWarnings = append(auxWarnings, "Confluence 동기화 실패: "+err.Error())
+		if err := a.collectConfluence(cc); err != nil {
+			auxWarnings = append(auxWarnings, "Confluence 동기화 실패 (이전 데이터 유지, 다음 주기 재시도)")
 		}
 	}
 	confluencePages := a.aggregateConfluence()
