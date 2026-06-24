@@ -60,7 +60,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'settings';
+type Tab = 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -132,6 +132,7 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     box: <><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></>, // box (프로젝트)
     gear: <><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></>, // settings (설정)
     note: <><path d="M2 6h3"/><path d="M2 10h3"/><path d="M2 14h3"/><path d="M2 18h3"/><rect width="16" height="20" x="5" y="2" rx="2"/><path d="M9.5 8h5"/><path d="M9.5 12h5"/><path d="M9.5 16H14"/></>, // notebook (기록)
+    search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>, // 검색
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -2078,6 +2079,117 @@ function SettingsView() {
     );
 }
 
+// ---- 통합 검색 (부하 최소: 폴링으로 받은 스냅샷 + 로컬 노트를 클라이언트에서 필터) ----
+function SearchView({snap, onEntity}: { snap: Snapshot; onEntity: (id: string) => void }) {
+    const [query, setQuery] = useState('');
+    const [notes, setNotes] = useState<Note[]>([]);
+    const [selJira, setSelJira] = useState<string | null>(null);
+    const [editNote, setEditNote] = useState<Note | null>(null);
+    useEffect(() => { ListNotes('').then((ns: any) => setNotes(ns || [])); }, []);
+
+    const q = query.trim().toLowerCase();
+    const entName = (id: string) => snap.entities.find(e => e.id === id)?.name || id;
+
+    const res = useMemo(() => {
+        if (q.length < 1) return null;
+        const has = (...xs: (string | undefined)[]) => xs.some(x => (x || '').toLowerCase().includes(q));
+        const CAP = 12;
+        const cut = (arr: any[]) => ({ items: arr.slice(0, CAP), total: arr.length });
+        return {
+            notes: cut(notes.filter(n => has(n.title, n.summary, n.participants, ...(n.entity_ids || []).map(entName)))),
+            jira: cut(snap.jira_issues.filter(i => has(i.key, i.summary, i.assignee, i.project_name))),
+            conf: cut(snap.confluence_pages.filter(p => has(p.title, p.space_name, p.author))),
+            mrs: cut([...snap.open_mrs, ...snap.merged_mrs].filter(m => has(m.title, m.project_path, m.author?.username))),
+            projs: cut(snap.projects.filter(p => has(p.path_with_namespace, p.name))),
+            ents: cut(snap.entities.filter(e => has(e.name, ...(e.aliases || [])))),
+        };
+    }, [q, notes, snap]);
+
+    const total = res ? res.notes.total + res.jira.total + res.conf.total + res.mrs.total + res.projs.total + res.ents.total : 0;
+
+    const section = (label: string, kind: string, count: number, children: any) => count === 0 ? null : (
+        <section className="stat-block">
+            <h3><span className={`src-dot src-${kind}`}/>{label} <span className="count">{count}</span></h3>
+            {children}
+        </section>
+    );
+    const more = (g: { items: any[]; total: number }) => g.total > g.items.length && <div className="poc-more">+{g.total - g.items.length}개 더</div>;
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>통합 검색</h2>
+                <input className="search" autoFocus placeholder="기록·Jira·Confluence·GitLab·거래처/프로젝트 전체 검색" value={query} onChange={e => setQuery(e.target.value)} style={{minWidth: 280}}/>
+                {res && <span className="poc-sub">{total}건</span>}
+            </div>
+
+            {!res && <section className="stat-block"><div className="empty">검색어를 입력하세요 — 폴링으로 받아둔 데이터에서 즉시 찾습니다(추가 조회 없음)</div></section>}
+            {res && total === 0 && <section className="stat-block"><div className="empty">'{query}' 결과 없음</div></section>}
+
+            {res && section('거래처 / 프로젝트', 'ent', res.ents.total, res.ents.items.map((e: Entity) => (
+                <div key={e.id} className="pipe" onClick={() => onEntity(e.id)}>
+                    <span className="src-dot" style={{background: e.accent || 'var(--accent)'}}/>
+                    <span className="pipe-proj">{e.name}</span>
+                    <span className="jira-assignee">{e.kind === 'company' ? '거래처' : '프로젝트'}</span>
+                </div>
+            )))}
+            {res && section('기록', 'note', res.notes.total, <>
+                {res.notes.items.map((n: Note) => (
+                    <div key={n.id} className="pipe" onClick={() => setEditNote(n)}>
+                        <span className={`note-kind note-${n.kind}`}>{n.kind === 'call' ? '통화' : '회의'}</span>
+                        <span className="pipe-proj">{n.title || '(제목 없음)'}</span>
+                        <span className="time">{(n.occurred_at || '').slice(0, 10)}</span>
+                    </div>
+                ))}
+                {more(res.notes)}
+            </>)}
+            {res && section('Jira', 'jira', res.jira.total, <>
+                {res.jira.items.map((i: JiraIssue) => (
+                    <div key={i.key} className="pipe" onClick={() => setSelJira(i.key)}>
+                        <span className={`jira-status jira-${i.status_category}`}>{i.status}</span>
+                        <span className="jira-key">{i.key}</span>
+                        <span className="pipe-proj">{i.summary}</span>
+                        <span className="jira-assignee">{i.assignee || '미지정'}</span>
+                    </div>
+                ))}
+                {more(res.jira)}
+            </>)}
+            {res && section('Confluence', 'conf', res.conf.total, <>
+                {res.conf.items.map((p: ConfluencePage) => (
+                    <div key={p.id} className="pipe" onClick={() => OpenURL(p.url)}>
+                        <span className="poc-cfspace">{p.space_key}</span>
+                        <span className="pipe-proj">{p.title}</span>
+                        <span className="time">{timeAgo(p.updated)}</span>
+                    </div>
+                ))}
+                {more(res.conf)}
+            </>)}
+            {res && section('MR', 'gl', res.mrs.total, <>
+                {res.mrs.items.map((m: MR) => (
+                    <div key={m.id} className="pipe" onClick={() => OpenURL(m.web_url)}>
+                        <span className="jira-key">!{m.iid}</span>
+                        <span className="pipe-proj">{m.title}</span>
+                        <span className="jira-assignee">{m.project_path}</span>
+                    </div>
+                ))}
+                {more(res.mrs)}
+            </>)}
+            {res && section('레포', 'gl', res.projs.total, <>
+                {res.projs.items.map((p: Project) => (
+                    <div key={p.id} className="pipe" onClick={() => OpenURL(p.web_url)}>
+                        <span className="repo-name"><Icon name="repo" size={13} className="repo-ico"/>{p.path_with_namespace}</span>
+                        <span className="time">{timeAgo(p.last_activity_at)}</span>
+                    </div>
+                ))}
+                {more(res.projs)}
+            </>)}
+
+            {selJira && <IssueModal issueKey={selJira} issues={snap.jira_issues} onClose={() => setSelJira(null)} onSelect={setSelJira}/>}
+            {editNote && <NoteEditor note={editNote} entities={snap.entities} onClose={() => setEditNote(null)} onReload={() => ListNotes('').then((ns: any) => setNotes(ns || []))}/>}
+        </div>
+    );
+}
+
 // ---- Main app ----
 const FEED_LIMIT = 300;
 
@@ -2206,6 +2318,11 @@ function App() {
                     <h1>Quantum Hub</h1>
                 </div>
                 <div className="nav-scroll">
+                    <div className="nav-group">
+                        <button className={`nav-item ${tab === 'search' ? 'nav-on' : ''}`} onClick={() => setTab('search')}>
+                            <Icon name="search" size={15}/> <span>통합 검색</span>
+                        </button>
+                    </div>
                     {NAV_GROUPS.map(g => (
                         <div key={g.label} className="nav-group">
                             <div className="nav-group-label">{g.label}</div>
@@ -2280,7 +2397,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'settings' ? <SettingsView/> : (
+                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">

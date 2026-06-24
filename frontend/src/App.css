@@ -1029,6 +1029,15 @@ html, body, #root {
     font-family: inherit; line-height: 1.5;
 }
 .note-area-lg { min-height: 240px; }
+
+/* ---- 통합 검색 ---- */
+.src-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; vertical-align: middle; flex-shrink: 0; }
+.src-ent { background: var(--purple); }
+.src-note { background: #f0883e; }
+.src-jira { background: var(--orange); }
+.src-conf { background: #2dd4bf; }
+.src-gl { background: var(--green); }
+.pipe .src-dot { margin-right: 0; }
 .note-share {
     display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     padding: 10px 12px; border: 1px solid var(--stroke); border-radius: 10px;
