@@ -566,6 +566,34 @@ export namespace main {
 	        this.commits = source["commits"];
 	    }
 	}
+	export class Entity {
+	    id: string;
+	    name: string;
+	    kind: string;
+	    gitlab_groups: string[];
+	    jira_keys: string[];
+	    confluence_query: string;
+	    aliases: string[];
+	    accent: string;
+	    active: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Entity(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.kind = source["kind"];
+	        this.gitlab_groups = source["gitlab_groups"];
+	        this.jira_keys = source["jira_keys"];
+	        this.confluence_query = source["confluence_query"];
+	        this.aliases = source["aliases"];
+	        this.accent = source["accent"];
+	        this.active = source["active"];
+	    }
+	}
 	
 	export class JiraIssueDetail {
 	    description: string;
@@ -618,6 +646,7 @@ export namespace main {
 	    jira_issues: jira.Issue[];
 	    jira_url: string;
 	    confluence_pages: confluence.Page[];
+	    entities: Entity[];
 	    error: string;
 	    warning: string;
 	    needs_config: boolean;
@@ -641,6 +670,7 @@ export namespace main {
 	        this.jira_issues = this.convertValues(source["jira_issues"], jira.Issue);
 	        this.jira_url = source["jira_url"];
 	        this.confluence_pages = this.convertValues(source["confluence_pages"], confluence.Page);
+	        this.entities = this.convertValues(source["entities"], Entity);
 	        this.error = source["error"];
 	        this.warning = source["warning"];
 	        this.needs_config = source["needs_config"];

@@ -1860,7 +1860,7 @@ function App() {
             <header className="topbar">
                 <div className="brand">
                     <span className={`dot ${snap.error ? 'dot-red' : 'dot-green'}`} title={snap.error || '정상'}/>
-                    <h1>GitLab Monitor</h1>
+                    <h1>Quantum Hub</h1>
                     <a className="instance" onClick={() => OpenURL(snap.gitlab_url)}>
                         {snap.gitlab_url.replace(/^https?:\/\//, '')}
                     </a>

@@ -76,6 +76,7 @@ type Snapshot struct {
 	JiraIssues      []jira.Issue          `json:"jira_issues"`
 	JiraURL         string                `json:"jira_url"`
 	ConfluencePages []confluence.Page     `json:"confluence_pages"` // PoC 관련 문서 (제품명 텍스트 매칭)
+	Entities        []Entity              `json:"entities"`         // 거래처/프로젝트 레지스트리
 	Error           string                `json:"error"`
 	Warning         string                `json:"warning"`
 	NeedsConfig     bool                  `json:"needs_config"`
@@ -106,8 +107,9 @@ type App struct {
 	confluenceClient    *confluence.Client
 	confluenceCache     map[string]*confluence.Page // page id → page
 	confluenceFetchedAt time.Time
-	cycle               int    // poll cycle counter
-	lastSig             uint64 // signature of the last published snapshot
+	entities            []Entity // 거래처/프로젝트 레지스트리 (entities.json)
+	cycle               int      // poll cycle counter
+	lastSig             uint64   // signature of the last published snapshot
 	// slow-changing metadata, refreshed every slowEvery cycles
 	lastVersion *gitlab.Version
 	lastStats   *gitlab.Statistics
@@ -144,6 +146,7 @@ func (a *App) startup(ctx context.Context) {
 	a.loadMRCache()
 	a.loadCommitsCache()
 	a.loadAliases()
+	a.loadEntities()
 	a.loadJiraCache()
 	a.loadConfluenceCache()
 	a.publishFromCache() // 디스크 캐시로 즉시 화면 표시 (이후 폴링이 갱신)
@@ -432,6 +435,7 @@ func (a *App) refresh() {
 	snap.JiraIssues = jiraIssues
 	snap.JiraURL = cfg.JiraURL
 	snap.ConfluencePages = confluencePages
+	snap.Entities = a.entitiesSnapshot()
 	if len(res.errs) > 0 {
 		// 부분 실패도 전부 노출
 		msgs := make([]string, len(res.errs))

@@ -10,16 +10,6 @@ import (
 	"gitlab-mon/internal/confluence"
 )
 
-// confluenceProducts maps a PoC product id to its Confluence text query. Pages
-// aren't cleanly separated by space (AkashiQ/KosmosAI docs both live in the
-// shared "AI 개발"·"회의록" spaces), so we attribute by product-name text match.
-// Mirrors the frontend PRODUCTS registry (id ↔ name). A page mentioning both
-// products is tagged with both.
-var confluenceProducts = []struct{ ID, Query string }{
-	{"akashiq", "AkashiQ"},
-	{"kosmos", "KosmosAI"},
-}
-
 const confluenceCacheVersion = 1
 
 type confluenceCacheFile struct {
@@ -63,21 +53,24 @@ func (a *App) saveConfluenceCache() {
 func (a *App) collectConfluence(client *confluence.Client) error {
 	fresh := map[string]*confluence.Page{}
 	var firstErr error
-	for _, prod := range confluenceProducts {
-		cql := fmt.Sprintf(`text ~ %q AND type = page AND lastmodified >= now("-%dd") ORDER BY lastmodified DESC`, prod.Query, statsWindowDay)
+	for _, ent := range a.entitiesSnapshot() {
+		if !ent.Active {
+			continue
+		}
+		cql := fmt.Sprintf(`text ~ %q AND type = page AND lastmodified >= now("-%dd") ORDER BY lastmodified DESC`, ent.cqlQuery(), statsWindowDay)
 		pages, err := client.Search(cql, 100)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			continue // 한 제품 실패가 다른 제품/기존 캐시를 버리지 않게
+			continue // 한 엔티티 실패가 다른 엔티티/기존 캐시를 버리지 않게
 		}
 		for i := range pages {
 			pg := pages[i]
 			if ex, ok := fresh[pg.ID]; ok {
-				ex.Products = append(ex.Products, prod.ID)
+				ex.Products = append(ex.Products, ent.ID)
 			} else {
-				pg.Products = []string{prod.ID}
+				pg.Products = []string{ent.ID}
 				fresh[pg.ID] = &pg
 			}
 		}

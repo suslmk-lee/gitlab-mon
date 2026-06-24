@@ -10,6 +10,10 @@ export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
 }
 
+export function GetEntities() {
+  return window['go']['main']['App']['GetEntities']();
+}
+
 export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
 }
@@ -40,6 +44,10 @@ export function SaveCSV(arg1, arg2) {
 
 export function SaveConfig(arg1, arg2) {
   return window['go']['main']['App']['SaveConfig'](arg1, arg2);
+}
+
+export function SaveEntities(arg1) {
+  return window['go']['main']['App']['SaveEntities'](arg1);
 }
 
 export function SummarizeWeek(arg1, arg2) {

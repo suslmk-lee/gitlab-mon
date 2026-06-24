@@ -115,6 +115,7 @@ func (a *App) publishFromCache() {
 		JiraURL:         cfg.JiraURL,
 		JiraIssues:      jiraIssues,
 		ConfluencePages: confluencePages,
+		Entities:        a.entitiesSnapshot(),
 		Version:         m.Version,
 		Stats:           m.Stats,
 		Events:          events,

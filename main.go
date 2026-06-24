@@ -18,7 +18,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:     "GitLab Monitor",
+		Title:     "Quantum Hub",
 		Width:     1380,
 		Height:    900,
 		MinWidth:  980,
@@ -34,7 +34,7 @@ func main() {
 			WebviewIsTransparent: true,
 			Appearance:           mac.NSAppearanceNameDarkAqua,
 		},
-		OnStartup:        app.startup,
+		OnStartup: app.startup,
 		Bind: []interface{}{
 			app,
 		},

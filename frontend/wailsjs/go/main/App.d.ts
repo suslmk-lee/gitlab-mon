@@ -6,6 +6,8 @@ export function GetAuthorMappings():Promise<main.AuthorMappingData>;
 
 export function GetConfig():Promise<Record<string, any>>;
 
+export function GetEntities():Promise<Array<main.Entity>>;
+
 export function GetSnapshot():Promise<main.Snapshot>;
 
 export function JiraDetail(arg1:string):Promise<main.JiraIssueDetail>;
@@ -21,6 +23,8 @@ export function SaveAuthorMappings(arg1:Array<main.AliasEntry>):Promise<string>;
 export function SaveCSV(arg1:string,arg2:string):Promise<string>;
 
 export function SaveConfig(arg1:string,arg2:string):Promise<string>;
+
+export function SaveEntities(arg1:Array<main.Entity>):Promise<string>;
 
 export function SummarizeWeek(arg1:string,arg2:number):Promise<string>;
 
