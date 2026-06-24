@@ -1820,6 +1820,72 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
     );
 }
 
+// ---- 경량 마크다운 렌더러 (자체 구현 — 의존성·innerHTML 없이 React 요소로 안전 렌더) ----
+function mdInline(text: string): (string | JSX.Element)[] {
+    const out: (string | JSX.Element)[] = [];
+    const re = /(`[^`]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\([^)\n]+\))/;
+    let rest = text, k = 0;
+    for (;;) {
+        const m = re.exec(rest);
+        if (!m) { if (rest) out.push(rest); break; }
+        if (m.index > 0) out.push(rest.slice(0, m.index));
+        const t = m[0];
+        if (t[0] === '`') out.push(<code key={k++}>{t.slice(1, -1)}</code>);
+        else if (t.startsWith('**')) out.push(<strong key={k++}>{t.slice(2, -2)}</strong>);
+        else if (t[0] === '*') out.push(<em key={k++}>{t.slice(1, -1)}</em>);
+        else {
+            const lm = /\[([^\]]+)\]\(([^)]+)\)/.exec(t)!;
+            out.push(<a key={k++} className="md-a" onClick={() => OpenURL(lm[2])}>{lm[1]}</a>);
+        }
+        rest = rest.slice(m.index + t.length);
+    }
+    return out;
+}
+
+const MD_BREAK = /^(#{1,6}\s|```|>\s?|\s*[-*+]\s+|\s*\d+\.\s+|---+\s*$|\*\*\*+\s*$)/;
+
+function Markdown({text}: { text: string }) {
+    const lines = (text || '').replace(/\r\n/g, '\n').split('\n');
+    const blocks: JSX.Element[] = [];
+    let i = 0, k = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        if (/^\s*$/.test(line)) { i++; continue; }
+        if (/^```/.test(line)) {
+            const buf: string[] = []; i++;
+            while (i < lines.length && !/^```/.test(lines[i])) { buf.push(lines[i]); i++; }
+            i++;
+            blocks.push(<pre key={k++} className="md-pre">{buf.join('\n')}</pre>);
+            continue;
+        }
+        if (/^(---+|\*\*\*+)\s*$/.test(line)) { blocks.push(<hr key={k++} className="md-hr"/>); i++; continue; }
+        const h = /^(#{1,6})\s+(.*)$/.exec(line);
+        if (h) { blocks.push(<div key={k++} className={`md-h md-h${Math.min(h[1].length, 4)}`}>{mdInline(h[2])}</div>); i++; continue; }
+        if (/^>\s?/.test(line)) {
+            const buf: string[] = [];
+            while (i < lines.length && /^>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^>\s?/, '')); i++; }
+            blocks.push(<blockquote key={k++} className="md-quote">{mdInline(buf.join(' '))}</blockquote>);
+            continue;
+        }
+        if (/^\s*[-*+]\s+/.test(line)) {
+            const items: string[] = [];
+            while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*+]\s+/, '')); i++; }
+            blocks.push(<ul key={k++} className="md-ul">{items.map((it, j) => <li key={j}>{mdInline(it)}</li>)}</ul>);
+            continue;
+        }
+        if (/^\s*\d+\.\s+/.test(line)) {
+            const items: string[] = [];
+            while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+\.\s+/, '')); i++; }
+            blocks.push(<ol key={k++} className="md-ol">{items.map((it, j) => <li key={j}>{mdInline(it)}</li>)}</ol>);
+            continue;
+        }
+        const buf: string[] = [];
+        while (i < lines.length && !/^\s*$/.test(lines[i]) && !MD_BREAK.test(lines[i])) { buf.push(lines[i]); i++; }
+        blocks.push(<p key={k++} className="md-p">{buf.map((b, j) => <span key={j}>{mdInline(b)}{j < buf.length - 1 ? <br/> : null}</span>)}</p>);
+    }
+    return <div className="md">{blocks}</div>;
+}
+
 // ---- 기록: 회의/통화 노트 ----
 function blankNote(): Note {
     return {id: 0, kind: 'meeting', title: '', occurred_at: new Date().toISOString().slice(0, 10),
@@ -1837,6 +1903,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
     const [ok, setOk] = useState('');
     const [spaces, setSpaces] = useState<CfSpace[]>([]);
     const [space, setSpace] = useState('');
+    const [mode, setMode] = useState<'edit' | 'preview'>('edit');
     const set = (patch: Partial<Note>) => { setN(prev => ({...prev, ...patch})); setOk(''); };
     const toggleEntity = (id: string) => set({entity_ids: n.entity_ids.includes(id) ? n.entity_ids.filter(x => x !== id) : [...n.entity_ids, id]});
 
@@ -1913,7 +1980,19 @@ function NoteEditor({note, entities, onClose, onReload}: {
                         {entities.length === 0 && <span className="hint">설정에서 거래처/프로젝트를 먼저 등록하세요</span>}
                     </div>
                 </div>
-                <label className="ent-field">내용<textarea className="ent-in note-area note-area-lg" placeholder="회의/통화 내용을 자유롭게 적으세요. ✨ AI 정리로 요약·결정·액션을 자동 정리할 수 있습니다." value={n.summary} onChange={e => set({summary: e.target.value})}/></label>
+                <div className="ent-field">
+                    <div className="note-content-head">
+                        <span>내용</span>
+                        <div className="tabs note-mode">
+                            <button className={mode === 'edit' ? 'tab tab-on' : 'tab'} onClick={() => setMode('edit')}>편집</button>
+                            <button className={mode === 'preview' ? 'tab tab-on' : 'tab'} onClick={() => setMode('preview')}>미리보기</button>
+                        </div>
+                        <span className="hint">마크다운 지원</span>
+                    </div>
+                    {mode === 'edit'
+                        ? <textarea className="ent-in note-area note-area-lg" placeholder="회의/통화 내용을 자유롭게 적으세요. 마크다운(#, -, **굵게** 등) 지원 — 붙여넣고 '미리보기'로 확인. ✨ AI 정리도 가능." value={n.summary} onChange={e => set({summary: e.target.value})}/>
+                        : <div className="note-preview note-area-lg">{n.summary.trim() ? <Markdown text={n.summary}/> : <span className="hint">내용 없음</span>}</div>}
+                </div>
 
                 {n.id > 0 && (
                     <div className="note-share">

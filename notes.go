@@ -279,7 +279,9 @@ func noteStorageHTML(n Note, entities []Entity) string {
 		}
 		fmt.Fprintf(&b, "<h2>%s</h2><p>%s</p>", esc(title), para(body))
 	}
-	section("내용", n.Summary)
+	if strings.TrimSpace(n.Summary) != "" {
+		fmt.Fprintf(&b, "<h2>내용</h2>%s", mdToStorageHTML(n.Summary)) // 내용은 마크다운 렌더
+	}
 	section("결정 사항", n.Decisions) // 구버전 노트 호환 (비어 있으면 생략)
 	section("액션 아이템", n.ActionItems)
 	b.WriteString("<hr/><p><em>Quantum Hub에서 작성된 기록</em></p>")
