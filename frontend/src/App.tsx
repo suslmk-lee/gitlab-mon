@@ -44,6 +44,7 @@ interface Snapshot {
     events: GLEvent[]; projects: Project[]; open_mrs: MR[]; merged_mrs: MR[];
     pipelines: Pipeline[]; code_daily: CodeDay[];
     jira_issues: JiraIssue[]; jira_url: string; confluence_pages: ConfluencePage[];
+    entities: Entity[];
     error: string; warning: string; needs_config: boolean;
 }
 
@@ -64,9 +65,7 @@ const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: strin
         {tab: 'jira', label: 'Jira', icon: 'jira'},
         {tab: 'weekly', label: '주간 리포트', icon: 'calendar'},
     ]},
-    {label: '프로젝트', items: [
-        {tab: 'poc', label: 'PoC', icon: 'box'},
-    ]},
+    // 거래처/프로젝트 그룹은 엔티티 레지스트리(snap.entities)로 동적 생성됨.
 ];
 const periodCutoff = (p: Period) => Date.now() - p * 86_400_000;
 
@@ -693,22 +692,27 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
 
 // ---- PoC(제품 타임라인) view ----
 // 제품 = GitLab 그룹 + Jira 프로젝트 묶음. PoC 진행 현황을 한 화면에 통합.
-interface Product { id: string; name: string; badge: string; accent: string; jiraKeys: string[]; glGroup: string }
-const PRODUCTS: Product[] = [
-    {id: 'akashiq', name: 'AkashiQ',  badge: '기본', accent: 'var(--accent)', jiraKeys: ['KSHQ', 'AK'], glGroup: 'akashiq'},
-    {id: 'kosmos',  name: 'KosmosAI', badge: '부가', accent: 'var(--purple)', jiraKeys: ['KU'],        glGroup: 'kosmos'},
-];
-const glInProduct = (p: Product, path: string) => {
-    const g = p.glGroup.toLowerCase(), x = (path || '').toLowerCase();
-    return x === g || x.startsWith(g + '/');
+// Entity는 백엔드 레지스트리(entities.json) 미러 — snapshot.entities로 전달됨.
+interface Entity {
+    id: string; name: string; kind: string;
+    gitlab_groups: string[]; jira_keys: string[]; confluence_query: string;
+    aliases: string[]; accent: string; active: boolean;
+}
+const entAccent = (e: Entity) => e.accent || 'var(--accent)';
+const glInEntity = (e: Entity, path: string) => {
+    const x = (path || '').toLowerCase();
+    return (e.gitlab_groups || []).some(g => {
+        const gl = g.toLowerCase();
+        return x === gl || x.startsWith(gl + '/');
+    });
 };
 
 interface ProductProgress { total: number; done: number; inprog: number; todo: number; epicTotal: number; epicDone: number }
 const isEpicType = (t: string) => t === '에픽' || t.toLowerCase() === 'epic';
-function jiraProgress(issues: JiraIssue[], p: Product): ProductProgress {
+function jiraProgress(issues: JiraIssue[], e: Entity): ProductProgress {
     let total = 0, done = 0, inprog = 0, todo = 0, epicTotal = 0, epicDone = 0;
     for (const i of issues) {
-        if (!p.jiraKeys.includes(i.project_key)) continue;
+        if (!(e.jira_keys || []).includes(i.project_key)) continue;
         total++;
         const isDone = i.status_category === 'done';
         if (isEpicType(i.type || '')) { epicTotal++; if (isDone) epicDone++; }
@@ -719,11 +723,11 @@ function jiraProgress(issues: JiraIssue[], p: Product): ProductProgress {
     return {total, done, inprog, todo, epicTotal, epicDone};
 }
 
-// 제품의 열린 이슈를 진행 중 / 남은 일(대기)로 분리, 최근 업데이트 순 정렬.
-function productOpenIssues(issues: JiraIssue[], p: Product): { inprog: JiraIssue[]; todo: JiraIssue[] } {
+// 엔티티의 열린 이슈를 진행 중 / 남은 일(대기)로 분리, 최근 업데이트 순 정렬.
+function entityOpenIssues(issues: JiraIssue[], e: Entity): { inprog: JiraIssue[]; todo: JiraIssue[] } {
     const inprog: JiraIssue[] = [], todo: JiraIssue[] = [];
     for (const i of issues) {
-        if (!p.jiraKeys.includes(i.project_key)) continue;
+        if (!(e.jira_keys || []).includes(i.project_key)) continue;
         if (i.status_category === 'indeterminate') inprog.push(i);
         else if (i.status_category === 'new') todo.push(i);
     }
@@ -742,17 +746,18 @@ function readinessLabel(pct: number): string {
 
 type TLSource = 'gitlab' | 'jira' | 'confluence';
 interface TLItem {
-    id: string; ts: number; iso: string; product: Product; source: TLSource;
+    id: string; ts: number; iso: string; product: Entity; source: TLSource;
     event?: GLEvent; issue?: JiraIssue; jiraAction?: string; page?: ConfluencePage;
 }
 
-function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
-    const [prodFilter, setProdFilter] = useState<'all' | string>('all'); // 기본: 둘 다 한 화면
+// 엔티티 허브 — 사이드바에서 고른 거래처/프로젝트(focus) 또는 전체의 준비도·타임라인.
+function HubView({snap, period, focus}: { snap: Snapshot; period: Period; focus: 'all' | string }) {
     const [sources, setSources] = useState<Set<TLSource>>(new Set(['gitlab', 'jira', 'confluence']));
     const [showBots, setShowBots] = useState(false);
     const [selected, setSelected] = useState<string | null>(null);
 
-    const activeProducts = prodFilter === 'all' ? PRODUCTS : PRODUCTS.filter(p => p.id === prodFilter);
+    const entities = snap.entities.filter(e => e.active);
+    const activeProducts = focus === 'all' ? entities : entities.filter(e => e.id === focus);
     const toggleSource = (s: TLSource) => setSources(prev => {
         const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n;
     });
@@ -765,7 +770,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
             if (sources.has('gitlab')) {
                 for (const e of snap.events) {
                     if (!showBots && e.author?.is_bot) continue;
-                    if (!glInProduct(p, e.project_path)) continue;
+                    if (!glInEntity(p, e.project_path)) continue;
                     const t = new Date(e.created_at).getTime();
                     if (t < cut) continue;
                     out.push({id: `gl-${e.id}`, ts: t, iso: e.created_at, product: p, source: 'gitlab', event: e});
@@ -773,7 +778,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
             }
             if (sources.has('jira')) {
                 for (const i of snap.jira_issues) {
-                    if (!p.jiraKeys.includes(i.project_key)) continue;
+                    if (!(p.jira_keys || []).includes(i.project_key)) continue;
                     const ct = new Date(i.created).getTime(), ut = new Date(i.updated).getTime();
                     if (ct >= cut) out.push({id: `jc-${i.key}`, ts: ct, iso: i.created, product: p, source: 'jira', issue: i, jiraAction: '생성'});
                     if (ut >= cut && ut - ct > 60_000) {
@@ -794,7 +799,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
         }
         out.sort((a, b) => b.ts - a.ts);
         return out.slice(0, 300);
-    }, [snap, period, prodFilter, sources, showBots]);
+    }, [snap, period, focus, sources, showBots]);
 
     const byDay = useMemo(() => {
         const groups: { day: string; items: TLItem[] }[] = [];
@@ -811,17 +816,17 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
     const docsByProduct = useMemo(() => {
         const cut = periodCutoff(period);
         const m = new Map<string, ConfluencePage[]>();
-        for (const p of PRODUCTS) {
+        for (const p of snap.entities) {
             m.set(p.id, snap.confluence_pages
                 .filter(pg => (pg.products || []).includes(p.id) && new Date(pg.updated).getTime() >= cut)
                 .sort((a, b) => new Date(b.updated).getTime() - new Date(a.updated).getTime()));
         }
         return m;
-    }, [snap.confluence_pages, period]);
+    }, [snap.confluence_pages, snap.entities, period]);
 
     const modal = selected &&
         <IssueModal issueKey={selected} issues={snap.jira_issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;
-    const showPTag = prodFilter === 'all';
+    const showPTag = activeProducts.length > 1;
 
     const issueRow = (i: JiraIssue) => (
         <div key={i.key} className="poc-irow" onClick={() => setSelected(i.key)}>
@@ -857,34 +862,30 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
     return (
         <div className="stats scroll">
             <div className="board-head">
-                <h2>PoC 현황</h2>
-                <span className="poc-sub">AkashiQ 기본 + KosmosAI 부가 · GitLab 우선, Jira 보조</span>
+                <h2>{focus === 'all' ? '전체 현황' : (activeProducts[0]?.name ?? '현황')}</h2>
+                <span className="poc-sub">
+                    {focus === 'all' ? '등록된 거래처·프로젝트 통합' : (activeProducts[0]?.kind === 'company' ? '거래처' : '프로젝트')} · GitLab·Jira·Confluence
+                </span>
             </div>
 
-            <div className="poc-pills">
-                <button className={`pill ${prodFilter === 'all' ? 'pill-on pill-other' : ''}`}
-                        onClick={() => setProdFilter('all')}>전체</button>
-                {PRODUCTS.map(p => (
-                    <button key={p.id}
-                            className={`pill ${prodFilter === p.id ? 'pill-on' : ''}`}
-                            style={prodFilter === p.id ? {borderColor: p.accent, color: p.accent} : undefined}
-                            onClick={() => setProdFilter(p.id)}>{p.name}</button>
-                ))}
-            </div>
+            {activeProducts.length === 0 && (
+                <section className="stat-block"><div className="empty">등록된 엔티티가 없습니다 — 설정에서 거래처/프로젝트를 추가하세요</div></section>
+            )}
 
             {activeProducts.map(p => {
                 const pr = jiraProgress(snap.jira_issues, p);
                 const pct = pr.total ? Math.round((pr.done / pr.total) * 100) : 0;
-                const {inprog, todo} = productOpenIssues(snap.jira_issues, p);
+                const {inprog, todo} = entityOpenIssues(snap.jira_issues, p);
                 const w = (n: number) => pr.total ? `${(n / pr.total) * 100}%` : '0%';
                 const docs = docsByProduct.get(p.id) ?? [];
+                const accent = entAccent(p);
                 return (
-                    <section key={p.id} className="stat-block poc-dash" style={{borderLeft: `3px solid ${p.accent}`}}>
+                    <section key={p.id} className="stat-block poc-dash" style={{borderLeft: `3px solid ${accent}`}}>
                         <div className="poc-dash-head">
-                            <span className="poc-dot" style={{background: p.accent}}/>
-                            <h3 style={{color: p.accent}}>{p.name}</h3>
-                            <span className="poc-badge" style={{borderColor: p.accent, color: p.accent}}>{p.badge}</span>
-                            <span className="poc-pct" style={{color: p.accent}}>{pct}%</span>
+                            <span className="poc-dot" style={{background: accent}}/>
+                            <h3 style={{color: accent}}>{p.name}</h3>
+                            <span className="poc-badge" style={{borderColor: accent, color: accent}}>{p.kind === 'company' ? '거래처' : '프로젝트'}</span>
+                            <span className="poc-pct" style={{color: accent}}>{pct}%</span>
                             <span className="poc-rlabel">{readinessLabel(pct)}</span>
                         </div>
                         <div className="poc-funnel" title={`완료 ${pr.done} · 진행 ${pr.inprog} · 대기 ${pr.todo}`}>
@@ -928,7 +929,7 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                         <div className="poc-day-head"><span>{g.day}</span></div>
                         {g.items.map(it => {
                             const tag = showPTag &&
-                                <span className="poc-ptag" style={{borderColor: it.product.accent, color: it.product.accent}}>{it.product.name}</span>;
+                                <span className="poc-ptag" style={{borderColor: entAccent(it.product), color: entAccent(it.product)}}>{it.product.name}</span>;
                             if (it.source === 'gitlab') {
                                 const e = it.event!;
                                 const k = eventKind(e);
@@ -951,9 +952,9 @@ function PoCView({snap, period}: { snap: Snapshot; period: Period }) {
                                 const pg = it.page!;
                                 // 문서는 두 제품에 걸칠 수 있으므로 매칭된 제품을 모두 태그로 표시
                                 const cfTags = showPTag && (pg.products || [])
-                                    .map(pid => PRODUCTS.find(x => x.id === pid))
-                                    .filter((x): x is Product => !!x)
-                                    .map(prod => <span key={prod.id} className="poc-ptag" style={{borderColor: prod.accent, color: prod.accent}}>{prod.name}</span>);
+                                    .map(pid => entities.find(x => x.id === pid))
+                                    .filter((x): x is Entity => !!x)
+                                    .map(prod => <span key={prod.id} className="poc-ptag" style={{borderColor: entAccent(prod), color: entAccent(prod)}}>{prod.name}</span>);
                                 return (
                                     <div key={it.id} className="event poc-row poc-cfrow" onClick={() => OpenURL(pg.url)}>
                                         <span className="badge poc-cfbadge"><Icon name="confluence" size={14}/></span>
@@ -1764,6 +1765,7 @@ function App() {
     const [snap, setSnap] = useState<Snapshot | null>(null);
     const [progress, setProgress] = useState<Progress | null>(null);
     const [tab, setTab] = useState<Tab>('feed');
+    const [hubFocus, setHubFocus] = useState<'all' | string>('all'); // 엔티티 허브 포커스
     const [period, setPeriod] = useState<Period>(30);
     const [filter, setFilter] = useState('');
     const [kinds, setKinds] = useState<Set<Kind>>(new Set());
@@ -1784,6 +1786,7 @@ function App() {
         code_daily: s.code_daily ?? [],
         jira_issues: s.jira_issues ?? [],
         confluence_pages: s.confluence_pages ?? [],
+        entities: s.entities ?? [],
     });
     const isReady = (s: any) =>
         s && s.fetched_at && !String(s.fetched_at).startsWith('0001');
@@ -1895,6 +1898,29 @@ function App() {
                             ))}
                         </div>
                     ))}
+                    <div className="nav-group">
+                        <div className="nav-group-label">현황</div>
+                        <button className={`nav-item ${tab === 'poc' && hubFocus === 'all' ? 'nav-on' : ''}`}
+                                onClick={() => { setHubFocus('all'); setTab('poc'); }}>
+                            <Icon name="box" size={15}/> <span>전체 현황</span>
+                        </button>
+                    </div>
+                    {(['project', 'company'] as const).map(kind => {
+                        const list = (snap.entities || []).filter(e => e.active && (kind === 'company' ? e.kind === 'company' : e.kind !== 'company'));
+                        if (list.length === 0) return null;
+                        return (
+                            <div key={kind} className="nav-group">
+                                <div className="nav-group-label">{kind === 'company' ? '거래처' : '프로젝트'}</div>
+                                {list.map(e => (
+                                    <button key={e.id}
+                                            className={`nav-item ${tab === 'poc' && hubFocus === e.id ? 'nav-on' : ''}`}
+                                            onClick={() => { setHubFocus(e.id); setTab('poc'); }}>
+                                        <span className="nav-dot" style={{background: e.accent || 'var(--accent)'}}/> <span>{e.name}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        );
+                    })}
                 </div>
                 <div className="sidebar-foot">
                     <a className="instance" onClick={() => OpenURL(snap.gitlab_url)}>
@@ -1928,7 +1954,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <PoCView snap={snap} period={period}/> : (
+                {tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">

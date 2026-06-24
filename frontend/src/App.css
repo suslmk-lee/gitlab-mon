@@ -82,6 +82,7 @@ html, body, #root {
 }
 .nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
 .nav-item .icon { flex-shrink: 0; opacity: 0.85; }
+.nav-dot { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; margin: 0 3px; box-shadow: 0 0 6px currentColor; }
 .nav-item.nav-on {
     background: rgba(108, 182, 255, 0.14); color: var(--text); font-weight: 600;
     box-shadow: inset 2px 0 0 var(--accent);
