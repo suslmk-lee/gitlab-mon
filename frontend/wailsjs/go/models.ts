@@ -682,9 +682,7 @@ export namespace main {
 	    }
 	}
 	export class NoteAI {
-	    summary: string;
-	    decisions: string;
-	    action_items: string;
+	    content: string;
 	    error: string;
 	
 	    static createFrom(source: any = {}) {
@@ -693,9 +691,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.summary = source["summary"];
-	        this.decisions = source["decisions"];
-	        this.action_items = source["action_items"];
+	        this.content = source["content"];
 	        this.error = source["error"];
 	    }
 	}

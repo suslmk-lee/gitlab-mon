@@ -208,6 +208,15 @@ func storageBody(html string) map[string]any {
 	return map[string]any{"storage": map[string]string{"value": html, "representation": "storage"}}
 }
 
+// absURL builds an absolute page URL — content responses sometimes omit
+// _links.base, so fall back to the site wiki base to avoid a relative (broken) URL.
+func (c *Client) absURL(base, webui string) string {
+	if base == "" {
+		base = c.BaseURL + "/wiki"
+	}
+	return base + webui
+}
+
 // CreatePage creates a new page in spaceKey with storage-format HTML.
 func (c *Client) CreatePage(spaceKey, title, html string) (PageRef, error) {
 	payload := map[string]any{
@@ -225,7 +234,7 @@ func (c *Client) CreatePage(spaceKey, title, html string) (PageRef, error) {
 	if err := c.send(http.MethodPost, "/wiki/rest/api/content", payload, &r); err != nil {
 		return PageRef{}, err
 	}
-	return PageRef{ID: r.ID, URL: r.Links.Base + r.Links.WebUI}, nil
+	return PageRef{ID: r.ID, URL: c.absURL(r.Links.Base, r.Links.WebUI)}, nil
 }
 
 // UpdatePage replaces an existing page's title/body (auto-increments version).
@@ -253,5 +262,5 @@ func (c *Client) UpdatePage(id, title, html string) (PageRef, error) {
 	if err := c.send(http.MethodPut, "/wiki/rest/api/content/"+id, payload, &r); err != nil {
 		return PageRef{}, err
 	}
-	return PageRef{ID: id, URL: r.Links.Base + r.Links.WebUI}, nil
+	return PageRef{ID: id, URL: c.absURL(r.Links.Base, r.Links.WebUI)}, nil
 }

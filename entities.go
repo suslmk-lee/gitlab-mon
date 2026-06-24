@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,17 +49,17 @@ func entitiesPath() (string, error) {
 // loadEntities loads the registry from disk, seeding+persisting defaults on first
 // run so AkashiQ/KosmosAI appear and stay editable in the settings screen.
 func (a *App) loadEntities() {
-	p, err := entitiesPath()
-	if err != nil {
-		return
+	if p, err := entitiesPath(); err == nil {
+		var es []Entity
+		if loadJSONFile(p, &es) && len(es) > 0 {
+			a.mu.Lock()
+			a.entities = es
+			a.mu.Unlock()
+			return
+		}
 	}
-	var es []Entity
-	if loadJSONFile(p, &es) && len(es) > 0 {
-		a.mu.Lock()
-		a.entities = es
-		a.mu.Unlock()
-		return
-	}
+	// 파일 없음·로드 실패·경로 오류 — 기본값으로 시드(메모리에라도 반드시 채워
+	// 허브/수집이 빈 레지스트리로 동작하지 않게). 가능하면 디스크에도 저장.
 	seed := make([]Entity, len(defaultEntities))
 	copy(seed, defaultEntities)
 	a.mu.Lock()
@@ -93,15 +94,29 @@ func (a *App) GetEntities() []Entity {
 // the change flows into hubs/collection. Returns "" on success or an error.
 func (a *App) SaveEntities(es []Entity) string {
 	clean := make([]Entity, 0, len(es))
-	for _, e := range es {
+	seen := map[string]bool{}
+	for i, e := range es {
 		e.ID = strings.TrimSpace(e.ID)
 		e.Name = strings.TrimSpace(e.Name)
-		if e.ID == "" || e.Name == "" {
+		if e.Name == "" {
 			continue
 		}
 		if e.Kind != "company" {
 			e.Kind = "project"
 		}
+		// 고유 id 보장 — 빈 값(예: 한글명 slug가 비는 경우)이나 중복은 대체/접미사.
+		// 기존 엔티티는 프론트가 id를 보존해 보내므로 참조가 깨지지 않음.
+		id := e.ID
+		if id == "" {
+			id = fmt.Sprintf("ent-%d", i+1)
+		}
+		base, k := id, 2
+		for seen[id] {
+			id = fmt.Sprintf("%s-%d", base, k)
+			k++
+		}
+		seen[id] = true
+		e.ID = id
 		clean = append(clean, e)
 	}
 	a.mu.Lock()

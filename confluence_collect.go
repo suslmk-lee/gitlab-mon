@@ -53,10 +53,12 @@ func (a *App) saveConfluenceCache() {
 func (a *App) collectConfluence(client *confluence.Client) error {
 	fresh := map[string]*confluence.Page{}
 	var firstErr error
+	queried := 0
 	for _, ent := range a.entitiesSnapshot() {
 		if !ent.Active {
 			continue
 		}
+		queried++
 		cql := fmt.Sprintf(`text ~ %q AND type = page AND lastmodified >= now("-%dd") ORDER BY lastmodified DESC`, ent.cqlQuery(), statsWindowDay)
 		pages, err := client.Search(cql, 100)
 		if err != nil {
@@ -83,6 +85,9 @@ func (a *App) collectConfluence(client *confluence.Client) error {
 	// 즉시 사라지도록). 일시적 빈-200은 드물고 다음 주기에 자가복구된다.
 	if firstErr != nil {
 		return firstErr
+	}
+	if queried == 0 {
+		return nil // 활성 엔티티 없음 — 빈 결과로 기존 캐시를 비우지 않음
 	}
 	a.confluenceCache = fresh
 	a.confluenceFetchedAt = time.Now()

@@ -1852,8 +1852,13 @@ function NoteEditor({note, entities, onClose, onReload}: {
         onReload();
     };
     const share = async () => {
+        if (!n.title.trim()) { setErr('제목을 입력하세요'); return; }
         setSharing(true); setErr(''); setOk('');
-        const r: any = await ShareNote(n.id, space);
+        // 편집 중 내용이 게시되도록 먼저 저장한 뒤 공유 (stale 방지)
+        const sr: any = await SaveNote(n);
+        if (sr?.error) { setSharing(false); setErr(sr.error); return; }
+        const saved = sr?.note || n;
+        const r: any = await ShareNote(saved.id, space);
         setSharing(false);
         if (r?.error) { setErr(r.error); return; }
         if (r?.note) setN(r.note);
@@ -1871,7 +1876,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
         const r: any = await SummarizeNote(n);
         setAiBusy(false);
         if (r?.error) { setErr(r.error); return; }
-        set({summary: r.summary || n.summary, decisions: r.decisions || n.decisions, action_items: r.action_items || n.action_items});
+        if (r?.content) set({summary: r.content});
         setOk('AI 정리 완료 — 검토 후 저장하세요');
     };
 
@@ -1907,9 +1912,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
                         {entities.length === 0 && <span className="hint">설정에서 거래처/프로젝트를 먼저 등록하세요</span>}
                     </div>
                 </div>
-                <label className="ent-field">요약<textarea className="ent-in note-area" value={n.summary} onChange={e => set({summary: e.target.value})}/></label>
-                <label className="ent-field">결정 사항<textarea className="ent-in note-area" value={n.decisions} onChange={e => set({decisions: e.target.value})}/></label>
-                <label className="ent-field">액션 아이템<textarea className="ent-in note-area" value={n.action_items} onChange={e => set({action_items: e.target.value})}/></label>
+                <label className="ent-field">내용<textarea className="ent-in note-area note-area-lg" placeholder="회의/통화 내용을 자유롭게 적으세요. ✨ AI 정리로 요약·결정·액션을 자동 정리할 수 있습니다." value={n.summary} onChange={e => set({summary: e.target.value})}/></label>
 
                 {n.id > 0 && (
                     <div className="note-share">
@@ -2010,7 +2013,8 @@ const ACCENTS = [
     {label: '파랑', val: 'var(--accent)'}, {label: '보라', val: 'var(--purple)'},
     {label: '초록', val: 'var(--green)'}, {label: '주황', val: 'var(--orange)'}, {label: '빨강', val: 'var(--red)'},
 ];
-const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'entity';
+// 유니코드 문자(한글 등)·숫자는 보존 — 한글명도 고유 id가 되도록(빈 경우만 'entity', 백엔드가 중복 접미사 처리)
+const slug = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]+/gu, '').replace(/^-+|-+$/g, '') || 'entity';
 
 function SettingsView() {
     const [list, setList] = useState<Entity[] | null>(null);

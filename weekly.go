@@ -1,11 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -332,36 +328,11 @@ func (a *App) SummarizeWeek(username string, offset int) string {
 		"기능 단위로 묶어 3~6개의 불릿으로 요약하고, 맨 위에 2~3문장 총평을 넣으세요. " +
 		"커밋 메시지의 prefix(feat/fix 등)와 내용을 해석해 자연스러운 업무 서술로 바꾸세요.\n\n" + b.String()
 
-	reqBody, _ := json.Marshal(map[string]any{
-		"model":      "claude-haiku-4-5-20251001",
-		"max_tokens": 1500,
-		"messages":   []map[string]string{{"role": "user", "content": prompt}},
-	})
-	req, err := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(reqBody))
+	txt, err := claudeComplete(apiKey, prompt, 1500)
 	if err != nil {
 		return "ERR:" + err.Error()
 	}
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("content-type", "application/json")
-	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
-	if err != nil {
-		return "ERR:" + err.Error()
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 300 {
-		return "ERR:Claude API " + resp.Status + " — " + string(body[:min(len(body), 200)])
-	}
-	var out struct {
-		Content []struct {
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if json.Unmarshal(body, &out) != nil || len(out.Content) == 0 {
-		return "ERR:응답 파싱 실패"
-	}
-	return out.Content[0].Text
+	return txt
 }
 
 // eventKindGo mirrors the frontend eventKind classification.
