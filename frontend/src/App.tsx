@@ -1920,6 +1920,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
     const [recExt, setRecExt] = useState('webm');
     const [recSecs, setRecSecs] = useState(0);
     const [audioSrc, setAudioSrc] = useState(''); // 저장된 녹음 재생용 data URL
+    const [confirmDel, setConfirmDel] = useState(false); // 녹음 삭제 확인
     const mrRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const streamRef = useRef<MediaStream | null>(null);
@@ -1950,7 +1951,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
             };
             mrRef.current = mr;
             mr.start();
-            setRecSecs(0); setRecState('recording'); setAudioSrc(''); tick();
+            setRecSecs(0); setRecState('recording'); setAudioSrc(''); setConfirmDel(false); tick();
         } catch (e: any) {
             setErr('마이크를 사용할 수 없습니다 — 권한을 확인하세요 (' + (e?.message || e) + ')');
         }
@@ -1958,7 +1959,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
     const pauseRec = () => { try { mrRef.current?.pause(); } catch {} setRecState('paused'); if (timerRef.current) clearInterval(timerRef.current); };
     const resumeRec = () => { try { mrRef.current?.resume(); } catch {} setRecState('recording'); tick(); };
     const stopRec = () => { try { mrRef.current?.stop(); } catch {} setRecState('idle'); if (timerRef.current) clearInterval(timerRef.current); };
-    const discardRec = () => { setRecBlob(null); setRecURL(''); };
+    const discardRec = () => { try { if (recURL) URL.revokeObjectURL(recURL); } catch {} setRecBlob(null); setRecURL(''); setConfirmDel(false); };
     const loadAudio = async () => {
         const b64: string = await ReadAudioBase64(n.audio_path);
         if (b64) setAudioSrc(`data:${audioMime(n.audio_path)};base64,${b64}`);
@@ -2083,8 +2084,14 @@ function NoteEditor({note, entities, onClose, onReload}: {
                         {recState === 'idle' && recBlob && <>
                             <audio className="note-audio" controls src={recURL}/>
                             <span className="hint">저장 시 첨부됩니다</span>
-                            <button className="btn btn-sm" onClick={discardRec}>삭제</button>
-                            <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음</button>
+                            {confirmDel ? <>
+                                <span className="rec-time">삭제할까요?</span>
+                                <button className="btn btn-sm rec-btn" onClick={discardRec}>삭제</button>
+                                <button className="btn btn-sm" onClick={() => setConfirmDel(false)}>취소</button>
+                            </> : <>
+                                <button className="btn btn-sm" onClick={() => setConfirmDel(true)}>삭제</button>
+                                <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음</button>
+                            </>}
                         </>}
                         {recState === 'idle' && !recBlob && (
                             n.audio_path ? <>
