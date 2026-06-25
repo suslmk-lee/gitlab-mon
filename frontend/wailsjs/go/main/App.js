@@ -14,6 +14,10 @@ export function DownloadNoteAudio(arg1, arg2) {
   return window['go']['main']['App']['DownloadNoteAudio'](arg1, arg2);
 }
 
+export function GenerateMinutesFromAudio(arg1) {
+  return window['go']['main']['App']['GenerateMinutesFromAudio'](arg1);
+}
+
 export function GetAIConfig() {
   return window['go']['main']['App']['GetAIConfig']();
 }
@@ -36,6 +40,10 @@ export function GetSnapshot() {
 
 export function HasFFmpeg() {
   return window['go']['main']['App']['HasFFmpeg']();
+}
+
+export function HasPython() {
+  return window['go']['main']['App']['HasPython']();
 }
 
 export function JiraDetail(arg1) {
