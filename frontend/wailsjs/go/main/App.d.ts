@@ -9,7 +9,7 @@ export function DeleteNote(arg1:number):Promise<string>;
 
 export function DownloadNoteAudio(arg1:number,arg2:boolean):Promise<main.AudioDownloadResult>;
 
-export function GenerateMinutesFromAudio(arg1:number):Promise<main.NoteAI>;
+export function GenerateMinutesFromAudio(arg1:number,arg2:string):Promise<main.NoteAI>;
 
 export function GetAIConfig():Promise<main.AIConfig>;
 

@@ -1982,15 +1982,29 @@ function NoteEditor({note, entities, onClose, onReload}: {
         } catch (e: any) { setErr('다운로드 실패: ' + (e?.message || e)); }
         setDlBusy(false);
     };
+    const [nlmPanel, setNlmPanel] = useState(false);
+    const [bgText, setBgText] = useState('');
+    // 노트가 이미 아는 정보로 배경 초안을 제안
+    const suggestBg = () => {
+        const parts: string[] = [];
+        if (n.title.trim()) parts.push(`회의 제목: ${n.title.trim()}`);
+        if (n.participants.trim()) parts.push(`참석자/상대: ${n.participants.trim()}`);
+        const ents = (n.entity_ids || []).map(id => entities.find(e => e.id === id)?.name).filter(Boolean);
+        if (ents.length) parts.push(`거래처/프로젝트: ${ents.join(', ')}`);
+        if (n.summary.trim()) parts.push(`기존 메모:\n${n.summary.trim()}`);
+        return parts.join('\n');
+    };
+    const openNlmPanel = () => { setBgText(prev => prev || suggestBg()); setNlmPanel(true); setErr(''); setOk(''); };
     const genMinutes = async () => {
         if (!n.id) { setErr('먼저 저장하세요'); return; }
         setNlmBusy(true); setErr(''); setOk('');
         try {
-            const r: any = await GenerateMinutesFromAudio(n.id);
+            const r: any = await GenerateMinutesFromAudio(n.id, bgText.trim());
             if (r?.error) setErr(r.error);
             else if (r?.content) {
                 set({summary: n.summary.trim() ? n.summary + '\n\n---\n\n' + r.content : r.content});
                 setOk('회의록 생성 완료 — 검토 후 저장하세요');
+                setNlmPanel(false);
             }
         } catch (e: any) { setErr('회의록 생성 실패: ' + (e?.message || e)); }
         setNlmBusy(false);
@@ -2131,11 +2145,23 @@ function NoteEditor({note, entities, onClose, onReload}: {
                                     : <button className="btn btn-sm" onClick={loadAudio}>▶ 녹음 듣기</button>}
                                 <button className="btn btn-sm" onClick={() => downloadAudio(hasFf)} disabled={dlBusy} title={hasFf ? 'm4a(AAC)로 변환 — QuickTime 등 어디서나 재생' : '원본 파일 저장'}>{dlBusy ? '저장 중…' : (hasFf ? '⬇ 다운로드(m4a)' : '⬇ 다운로드')}</button>
                                 {hasFf && <button className="btn btn-sm" onClick={() => downloadAudio(false)} disabled={dlBusy} title="변환 없이 원본(webm) 저장">원본</button>}
-                                {hasPy && <button className="btn btn-sm" onClick={genMinutes} disabled={nlmBusy} title="NotebookLM에 업로드해 전사 기반 회의록 생성 (임시 노트북, 수 분 소요)">{nlmBusy ? '회의록 생성 중… (수 분)' : '📝 회의록 생성'}</button>}
+                                {hasPy && <button className="btn btn-sm" onClick={openNlmPanel} disabled={nlmBusy} title="NotebookLM에 업로드해 전사 기반 회의록 생성 (임시 노트북, 수 분 소요)">{nlmBusy ? '회의록 생성 중… (수 분)' : '📝 회의록 생성'}</button>}
                                 <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음(교체)</button>
                             </> : <button className="btn btn-sm rec-btn" onClick={startRec}>● 녹음 시작</button>
                         )}
                     </div>
+                    {nlmPanel && (
+                        <div className="nlm-panel">
+                            <div className="hint">배경/맥락 (선택) — 참석자·거래처/프로젝트·용어·약어·논의 배경 등을 적으면 회의록 품질이 올라갑니다. 노트 정보로 초안을 채웠습니다.</div>
+                            <textarea className="ent-in note-area" rows={5} value={bgText} onChange={e => setBgText(e.target.value)}
+                                      placeholder="예) 거래처 종근당, AkashiQ PoC 견적 관련 회의. 약어: MR=Merge Request …"/>
+                            <div className="nlm-panel-actions">
+                                <button className="btn btn-sm nlm-gen" onClick={genMinutes} disabled={nlmBusy}>{nlmBusy ? '생성 중… (수 분 소요)' : '📝 회의록 생성'}</button>
+                                <button className="btn btn-sm" onClick={() => setBgText(suggestBg())} disabled={nlmBusy} title="노트 정보로 다시 채우기">초안 다시 채우기</button>
+                                <button className="btn btn-sm" onClick={() => setNlmPanel(false)} disabled={nlmBusy}>취소</button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {n.id > 0 && (

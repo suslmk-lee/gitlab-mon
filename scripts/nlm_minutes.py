@@ -42,7 +42,20 @@ def emit(content: str = "", error: str = "") -> None:
     sys.exit(0 if not error else 1)
 
 
-async def analyze(audio_path: str, notebook_name: str, wait_timeout: float) -> str:
+def build_prompt(context: str) -> str:
+    """배경/맥락이 있으면 분석 프롬프트 앞에 덧붙인다."""
+    context = (context or "").strip()
+    if not context:
+        return PROMPT
+    return (
+        "아래는 이 회의에 대한 배경 정보 및 추가 지시입니다. "
+        "회의록을 작성할 때 이 맥락(참석자·프로젝트·용어·약어 등)을 적극 반영하되, "
+        "음성에 없는 사실을 지어내지는 마세요.\n"
+        "<배경>\n" + context + "\n</배경>\n\n" + PROMPT
+    )
+
+
+async def analyze(audio_path: str, notebook_name: str, wait_timeout: float, context: str) -> str:
     from notebooklm import NotebookLMClient  # 호출 전 main에서 설치 여부 확인
 
     async with NotebookLMClient.from_storage() as client:
@@ -51,7 +64,7 @@ async def analyze(audio_path: str, notebook_name: str, wait_timeout: float) -> s
             await client.sources.add_file(
                 nb.id, Path(audio_path), wait=True, wait_timeout=wait_timeout
             )
-            result = await client.chat.ask(nb.id, PROMPT)
+            result = await client.chat.ask(nb.id, build_prompt(context))
             return (getattr(result, "answer", "") or "").strip()
         finally:
             # 임시 노트북 삭제(실패해도 결과 출력은 유지)
@@ -80,8 +93,16 @@ def main() -> None:
     except Exception as exc:  # 미설치
         emit(error=f"notebooklm-py 미설치 — 'pip install notebooklm-py[browser]' 필요 ({exc})")
 
+    # 배경/맥락은 stdin으로 전달된다(파이프). 터미널 직접 실행 시엔 비움.
+    context = ""
     try:
-        content = asyncio.run(analyze(audio, name, wait_timeout))
+        if not sys.stdin.isatty():
+            context = sys.stdin.read()
+    except Exception:
+        context = ""
+
+    try:
+        content = asyncio.run(analyze(audio, name, wait_timeout, context))
     except Exception as exc:
         emit(error=f"NotebookLM 처리 실패: {exc} — 로그인 필요 시 'notebooklm login'을 실행하세요")
 

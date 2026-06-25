@@ -60,7 +60,11 @@ func writeNLMScript() (string, error) {
 // the notebooklm-py helper, generates a Korean meeting minutes (transcription-
 // based), and deletes the temporary notebook. The minutes markdown is returned
 // for the editor to review before saving. This can take several minutes.
-func (a *App) GenerateMinutesFromAudio(noteID int64) NoteAI {
+//
+// bgContext is optional background/context (참석자·프로젝트·용어·추가 지시 등)
+// passed to the helper via stdin and woven into the analysis prompt for higher
+// quality minutes.
+func (a *App) GenerateMinutesFromAudio(noteID int64, bgContext string) NoteAI {
 	n, err := a.getNote(noteID)
 	if err != nil {
 		return NoteAI{Error: "기록을 찾을 수 없습니다: " + err.Error()}
@@ -110,6 +114,7 @@ func (a *App) GenerateMinutesFromAudio(noteID int64) NoteAI {
 	}
 
 	cmd := exec.CommandContext(ctx, py, script, upload, name, "1200")
+	cmd.Stdin = strings.NewReader(bgContext) // 배경/맥락을 stdin으로 전달
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

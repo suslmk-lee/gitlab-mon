@@ -14,8 +14,8 @@ export function DownloadNoteAudio(arg1, arg2) {
   return window['go']['main']['App']['DownloadNoteAudio'](arg1, arg2);
 }
 
-export function GenerateMinutesFromAudio(arg1) {
-  return window['go']['main']['App']['GenerateMinutesFromAudio'](arg1);
+export function GenerateMinutesFromAudio(arg1, arg2) {
+  return window['go']['main']['App']['GenerateMinutesFromAudio'](arg1, arg2);
 }
 
 export function GetAIConfig() {
