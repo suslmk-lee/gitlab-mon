@@ -2049,11 +2049,21 @@ function NoteEditor({note, entities, onClose, onReload}: {
         GetMembers().then((ms: any) => setMembers(ms || []));
         GetTeams().then((ts: any) => setTeams(ts || []));
     }, []);
+    const [partInput, setPartInput] = useState('');
     const partList = () => n.participants.split(',').map(s => s.trim()).filter(Boolean);
     const toggleParticipant = (name: string) => {
         const cur = partList();
         set({participants: (cur.includes(name) ? cur.filter(x => x !== name) : [...cur, name]).join(', ')});
     };
+    const removeParticipant = (name: string) => set({participants: partList().filter(x => x !== name).join(', ')});
+    const addCustomParticipant = () => {
+        const v = partInput.trim();
+        if (!v) return;
+        const cur = partList();
+        if (!cur.includes(v)) set({participants: [...cur, v].join(', ')});
+        setPartInput('');
+    };
+    const memberNames = new Set(members.map(m => m.name));
     // 활성 팀원을 팀별로 묶음 (팀 레지스트리 순서, 미배정은 마지막)
     const partGroups = teams
         .map(t => ({name: t.name, ms: members.filter(m => m.active && m.team_id === t.id)}))
@@ -2128,10 +2138,18 @@ function NoteEditor({note, entities, onClose, onReload}: {
                 <input className="ent-in note-title-in" placeholder="제목" value={n.title} onChange={e => set({title: e.target.value})}/>
                 <div className="note-form-row">
                     <label className="ent-field">일시<input className="ent-in" type="date" value={(n.occurred_at || '').slice(0, 10)} onChange={e => set({occurred_at: e.target.value})}/></label>
-                    <label className="ent-field note-grow">참석자 / 상대<input className="ent-in" placeholder="이름, ..." value={n.participants} onChange={e => set({participants: e.target.value})}/></label>
                 </div>
-                {partGroups.length > 0 && (
-                    <div className="ent-field">팀원에서 선택
+                <div className="ent-field">참석자
+                    <div className="part-chips">
+                        {partList().length === 0
+                            ? <span className="hint">아래에서 팀원을 고르거나 직접 입력해 추가하세요</span>
+                            : partList().map(p => (
+                                <span key={p} className={`part-chip ${memberNames.has(p) ? '' : 'part-chip-ext'}`}>
+                                    {p}<button type="button" className="part-x" title="제거" onClick={() => removeParticipant(p)}>✕</button>
+                                </span>
+                            ))}
+                    </div>
+                    {partGroups.length > 0 && (
                         <div className="member-pick">
                             {partGroups.map(g => (
                                 <div key={g.name} className="member-pick-group">
@@ -2144,8 +2162,14 @@ function NoteEditor({note, entities, onClose, onReload}: {
                                 </div>
                             ))}
                         </div>
+                    )}
+                    <div className="part-add">
+                        <input className="ent-in" placeholder="외부 참석자 직접 입력 후 Enter (예: 고동현 대리(종근당))"
+                               value={partInput} onChange={e => setPartInput(e.target.value)}
+                               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomParticipant(); } }}/>
+                        <button type="button" className="btn btn-sm" onClick={addCustomParticipant} disabled={!partInput.trim()}>추가</button>
                     </div>
-                )}
+                </div>
                 <div className="ent-field">거래처 / 프로젝트
                     <div className="poc-pills">
                         {entities.filter(e => e.active).map(e => (
