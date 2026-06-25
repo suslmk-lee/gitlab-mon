@@ -2377,49 +2377,88 @@ const slug = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '-').replace(
 
 const blankMember = (teamId = ''): Member => ({id: '', name: '', team_id: teamId, role: '', email: '', gitlab_username: '', git_aliases: [], active: true});
 
-// ---- 팀 관리 ----
+const blankTeam = (): Team => ({id: '', name: '', accent: 'var(--accent)', active: true});
+
+// ---- 팀 관리 (리스트 + 추가/수정 모달) ----
 function TeamsSection() {
     const [list, setList] = useState<Team[] | null>(null);
-    const [saving, setSaving] = useState(false);
-    const [msg, setMsg] = useState('');
-    useEffect(() => { GetTeams().then((ts: any) => setList(ts || [])); }, []);
+    const [editIdx, setEditIdx] = useState<number | null>(null); // null=닫힘, -1=신규
+    const [draft, setDraft] = useState<Team>(blankTeam());
+    const [busy, setBusy] = useState(false);
+    const reload = () => GetTeams().then((ts: any) => setList(ts || []));
+    useEffect(() => { reload(); }, []);
 
     if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
-    const upd = (i: number, patch: Partial<Team>) => setList(l => l!.map((t, idx) => idx === i ? {...t, ...patch} : t));
-    const add = () => setList(l => [...l!, {id: '', name: '', accent: 'var(--accent)', active: true}]);
-    const del = (i: number) => setList(l => l!.filter((_, idx) => idx !== i));
-    const save = async () => {
-        setSaving(true); setMsg('');
-        const r = await SaveTeams(list);
-        const fresh: any = await GetTeams();
-        setSaving(false);
-        setList(fresh || list);
-        setMsg(r || '저장되었습니다 ✓');
+    const openAdd = () => { setDraft(blankTeam()); setEditIdx(-1); };
+    const openEdit = (t: Team, i: number) => { setDraft({...t}); setEditIdx(i); };
+    const close = () => { if (!busy) setEditIdx(null); };
+    const saveDraft = async () => {
+        if (!draft.name.trim()) return;
+        setBusy(true);
+        const next = editIdx! >= 0 ? list.map((t, i) => i === editIdx ? draft : t) : [...list, draft];
+        await SaveTeams(next);
+        await reload();
+        setBusy(false); setEditIdx(null);
+    };
+    const delTeam = async () => {
+        if (editIdx === null || editIdx < 0) { setEditIdx(null); return; }
+        setBusy(true);
+        await SaveTeams(list.filter((_, i) => i !== editIdx));
+        await reload();
+        setBusy(false); setEditIdx(null);
     };
 
     return (
         <div className="stats scroll">
-            <div className="board-head"><h2>팀</h2></div>
-            <p className="hint">조직의 팀을 등록합니다. 팀원 화면에서 각 팀원을 이 팀에 배정합니다.</p>
-            {list.length === 0 && <div className="empty">등록된 팀이 없습니다 — 아래에서 추가하세요</div>}
-            {list.map((t, i) => (
-                <section key={i} className="stat-block ent-card" style={{borderLeft: `3px solid ${t.accent || 'var(--accent)'}`}}>
-                    <div className="ent-row">
-                        <input className="ent-in ent-name" placeholder="팀 이름 (예: 개발팀)" value={t.name} onChange={e => upd(i, {name: e.target.value})}/>
-                        <select className="jselect" value={t.accent || 'var(--accent)'} onChange={e => upd(i, {accent: e.target.value})}>
-                            {ACCENTS.map(a => <option key={a.val} value={a.val}>{a.label}</option>)}
-                        </select>
-                        <label className="ent-active"><input type="checkbox" checked={t.active} onChange={e => upd(i, {active: e.target.checked})}/> 활성</label>
-                        <button className="map-del" title="삭제" onClick={() => del(i)}>✕</button>
-                    </div>
-                </section>
-            ))}
-            <div className="ent-actions">
-                <button className="btn btn-sm" onClick={add}>+ 팀 추가</button>
-                <span style={{flex: 1}}/>
-                {msg && <span className="hint">{msg}</span>}
-                <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '팀 저장'}</button>
+            <div className="board-head">
+                <h2>팀</h2>
+                <button className="refresh-btn" onClick={openAdd}>+ 팀 추가</button>
             </div>
+            <p className="hint">조직의 팀을 등록합니다. 팀원 화면에서 각 팀원을 이 팀에 배정합니다.</p>
+            {list.length === 0
+                ? <div className="empty">등록된 팀이 없습니다 — ‘팀 추가’로 시작하세요</div>
+                : <div className="reg-list">
+                    {list.map((t, i) => (
+                        <button key={t.id || i} className="reg-card" onClick={() => openEdit(t, i)}>
+                            <span className="reg-dot" style={{background: t.accent || 'var(--accent)'}}/>
+                            <span className="reg-name">{t.name}</span>
+                            {!t.active && <span className="reg-off">비활성</span>}
+                            <span className="reg-edit">수정</span>
+                        </button>
+                    ))}
+                </div>}
+
+            {editIdx !== null && (
+                <div className="modal-overlay" onClick={close}>
+                    <div className="modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-head">
+                            <h2 className="modal-title">{editIdx >= 0 ? '팀 수정' : '팀 추가'}</h2>
+                            <button className="modal-x" onClick={close}>✕</button>
+                        </div>
+                        <div className="modal-section">
+                            <label className="ent-field">팀 이름
+                                <input className="ent-in" autoFocus value={draft.name} placeholder="예: AI 개발팀"
+                                       onChange={e => setDraft({...draft, name: e.target.value})}
+                                       onKeyDown={e => { if (e.key === 'Enter') saveDraft(); }}/>
+                            </label>
+                            <div className="modal-form-row">
+                                <label className="ent-field">색
+                                    <select className="jselect" value={draft.accent || 'var(--accent)'} onChange={e => setDraft({...draft, accent: e.target.value})}>
+                                        {ACCENTS.map(a => <option key={a.val} value={a.val}>{a.label}</option>)}
+                                    </select>
+                                </label>
+                                <label className="ent-active"><input type="checkbox" checked={draft.active} onChange={e => setDraft({...draft, active: e.target.checked})}/> 활성</label>
+                            </div>
+                        </div>
+                        <div className="modal-actions">
+                            {editIdx >= 0 && <button className="btn btn-danger" onClick={delTeam} disabled={busy}>삭제</button>}
+                            <span style={{flex: 1}}/>
+                            <button className="btn" onClick={close} disabled={busy}>취소</button>
+                            <button className="refresh-btn" onClick={saveDraft} disabled={busy || !draft.name.trim()}>{busy ? '저장 중…' : '저장'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
