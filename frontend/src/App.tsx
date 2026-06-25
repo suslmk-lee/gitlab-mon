@@ -2375,6 +2375,20 @@ const ACCENTS = [
 // 유니코드 문자(한글 등)·숫자는 보존 — 한글명도 고유 id가 되도록(빈 경우만 'entity', 백엔드가 중복 접미사 처리)
 const slug = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]+/gu, '').replace(/^-+|-+$/g, '') || 'entity';
 
+// 색상 선택 — 라벨이 아닌 색 스와치로 고름
+function ColorPicker({value, onChange}: { value: string; onChange: (v: string) => void }) {
+    const cur = value || 'var(--accent)';
+    return (
+        <div className="color-pick">
+            {ACCENTS.map(a => (
+                <button key={a.val} type="button" title={a.label} aria-label={a.label}
+                        className={`color-sw ${cur === a.val ? 'color-sw-on' : ''}`}
+                        style={{background: a.val}} onClick={() => onChange(a.val)}/>
+            ))}
+        </div>
+    );
+}
+
 const blankMember = (teamId = ''): Member => ({id: '', name: '', team_id: teamId, role: '', email: '', gitlab_username: '', git_aliases: [], active: true});
 
 const blankTeam = (): Team => ({id: '', name: '', accent: 'var(--accent)', active: true});
@@ -2443,9 +2457,7 @@ function TeamsSection() {
                             </label>
                             <div className="modal-form-row">
                                 <label className="ent-field">색
-                                    <select className="jselect" value={draft.accent || 'var(--accent)'} onChange={e => setDraft({...draft, accent: e.target.value})}>
-                                        {ACCENTS.map(a => <option key={a.val} value={a.val}>{a.label}</option>)}
-                                    </select>
+                                    <ColorPicker value={draft.accent} onChange={v => setDraft({...draft, accent: v})}/>
                                 </label>
                                 <label className="ent-active"><input type="checkbox" checked={draft.active} onChange={e => setDraft({...draft, active: e.target.checked})}/> 활성</label>
                             </div>
@@ -2578,9 +2590,7 @@ function EntitiesSection() {
                             <option value="project">프로젝트</option>
                             <option value="company">거래처</option>
                         </select>
-                        <select className="jselect" value={e.accent || 'var(--accent)'} onChange={ev => upd(i, {accent: ev.target.value})}>
-                            {ACCENTS.map(a => <option key={a.val} value={a.val}>{a.label}</option>)}
-                        </select>
+                        <ColorPicker value={e.accent} onChange={v => upd(i, {accent: v})}/>
                         <label className="ent-active"><input type="checkbox" checked={e.active} onChange={ev => upd(i, {active: ev.target.checked})}/> 활성</label>
                         <button className="map-del" title="삭제" onClick={() => del(i)}>✕</button>
                     </div>

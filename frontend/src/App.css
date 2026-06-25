@@ -1139,6 +1139,13 @@ html, body, #root {
 .reg-edit { margin-left: auto; font-size: 12px; color: var(--muted); }
 .reg-card:hover .reg-edit { color: var(--accent); }
 .modal-form-row { display: flex; align-items: flex-end; gap: 16px; margin-top: 12px; }
+.color-pick { display: flex; gap: 11px; align-items: center; padding-top: 4px; }
+.color-sw {
+    width: 24px; height: 24px; border-radius: 50%; padding: 0; cursor: pointer;
+    border: none; box-shadow: 0 0 0 1px var(--stroke); transition: transform 0.1s;
+}
+.color-sw:hover { transform: scale(1.12); }
+.color-sw-on { outline: 2px solid var(--text); outline-offset: 2px; }
 .btn-danger { color: var(--red); border-color: rgba(255, 107, 107, 0.4); }
 .btn-danger:hover { background: rgba(255, 107, 107, 0.12); }
 .members-sec { margin: 6px 0 4px; }
