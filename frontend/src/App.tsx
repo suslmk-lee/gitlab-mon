@@ -1984,22 +1984,25 @@ function NoteEditor({note, entities, onClose, onReload}: {
     };
     const [nlmPanel, setNlmPanel] = useState(false);
     const [bgText, setBgText] = useState('');
-    // 노트가 이미 아는 정보로 배경 초안을 제안
-    const suggestBg = () => {
-        const parts: string[] = [];
-        if (n.title.trim()) parts.push(`회의 제목: ${n.title.trim()}`);
+    // 회의록 생성 시 항상 함께 전달되는 노트 메타데이터
+    const metaBlock = () => {
+        const parts: string[] = [`종류: ${n.kind === 'call' ? '통화' : '회의'}`];
+        if (n.title.trim()) parts.push(`제목: ${n.title.trim()}`);
+        const d = (n.occurred_at || '').slice(0, 10);
+        if (d) parts.push(`일시: ${d}`);
         if (n.participants.trim()) parts.push(`참석자/상대: ${n.participants.trim()}`);
         const ents = (n.entity_ids || []).map(id => entities.find(e => e.id === id)?.name).filter(Boolean);
         if (ents.length) parts.push(`거래처/프로젝트: ${ents.join(', ')}`);
-        if (n.summary.trim()) parts.push(`기존 메모:\n${n.summary.trim()}`);
         return parts.join('\n');
     };
-    const openNlmPanel = () => { setBgText(prev => prev || suggestBg()); setNlmPanel(true); setErr(''); setOk(''); };
+    const openNlmPanel = () => { setNlmPanel(true); setErr(''); setOk(''); };
     const genMinutes = async () => {
         if (!n.id) { setErr('먼저 저장하세요'); return; }
         setNlmBusy(true); setErr(''); setOk('');
+        const extra = bgText.trim();
+        const full = extra ? metaBlock() + '\n\n[추가 배경]\n' + extra : metaBlock();
         try {
-            const r: any = await GenerateMinutesFromAudio(n.id, bgText.trim());
+            const r: any = await GenerateMinutesFromAudio(n.id, full);
             if (r?.error) setErr(r.error);
             else if (r?.content) {
                 set({summary: n.summary.trim() ? n.summary + '\n\n---\n\n' + r.content : r.content});
@@ -2152,12 +2155,13 @@ function NoteEditor({note, entities, onClose, onReload}: {
                     </div>
                     {nlmPanel && (
                         <div className="nlm-panel">
-                            <div className="hint">배경/맥락 (선택) — 참석자·거래처/프로젝트·용어·약어·논의 배경 등을 적으면 회의록 품질이 올라갑니다. 노트 정보로 초안을 채웠습니다.</div>
+                            <div className="hint">아래 노트 정보가 회의록 생성 시 맥락으로 함께 전달됩니다:</div>
+                            <pre className="nlm-meta">{metaBlock()}</pre>
+                            <div className="hint">추가 배경/맥락 (선택) — 용어·약어·논의 배경·이전 결정 등을 적으면 품질이 더 올라갑니다.</div>
                             <textarea className="ent-in note-area" rows={5} value={bgText} onChange={e => setBgText(e.target.value)}
-                                      placeholder="예) 거래처 종근당, AkashiQ PoC 견적 관련 회의. 약어: MR=Merge Request …"/>
+                                      placeholder="예) 약어 MR=Merge Request, 지난 회의에서 견적 재검토 결정 …"/>
                             <div className="nlm-panel-actions">
                                 <button className="btn btn-sm nlm-gen" onClick={genMinutes} disabled={nlmBusy}>{nlmBusy ? '생성 중… (수 분 소요)' : '📝 회의록 생성'}</button>
-                                <button className="btn btn-sm" onClick={() => setBgText(suggestBg())} disabled={nlmBusy} title="노트 정보로 다시 채우기">초안 다시 채우기</button>
                                 <button className="btn btn-sm" onClick={() => setNlmPanel(false)} disabled={nlmBusy}>취소</button>
                             </div>
                         </div>
