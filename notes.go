@@ -107,7 +107,7 @@ func noteEntityIDs(db *sql.DB, id int64) []string {
 		return nil
 	}
 	defer rows.Close()
-	var ids []string
+	ids := []string{} // 엔티티가 없어도 nil 대신 빈 배열 반환 (프론트 .includes/.map 보호)
 	for rows.Next() {
 		var e string
 		if rows.Scan(&e) == nil {

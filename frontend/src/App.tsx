@@ -1971,7 +1971,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
         r.readAsDataURL(blob);
     });
     const set = (patch: Partial<Note>) => { setN(prev => ({...prev, ...patch})); setOk(''); };
-    const toggleEntity = (id: string) => set({entity_ids: n.entity_ids.includes(id) ? n.entity_ids.filter(x => x !== id) : [...n.entity_ids, id]});
+    const toggleEntity = (id: string) => { const cur = n.entity_ids || []; set({entity_ids: cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]}); };
 
     useEffect(() => { ConfluenceSpaces().then((s: any) => setSpaces(s || [])); }, []);
 
@@ -2048,8 +2048,8 @@ function NoteEditor({note, entities, onClose, onReload}: {
                     <div className="poc-pills">
                         {entities.filter(e => e.active).map(e => (
                             <button key={e.id}
-                                    className={`pill ${n.entity_ids.includes(e.id) ? 'pill-on' : ''}`}
-                                    style={n.entity_ids.includes(e.id) ? {borderColor: e.accent || 'var(--accent)', color: e.accent || 'var(--accent)'} : undefined}
+                                    className={`pill ${(n.entity_ids || []).includes(e.id) ? 'pill-on' : ''}`}
+                                    style={(n.entity_ids || []).includes(e.id) ? {borderColor: e.accent || 'var(--accent)', color: e.accent || 'var(--accent)'} : undefined}
                                     onClick={() => toggleEntity(e.id)}>{e.name}</button>
                         ))}
                         {entities.length === 0 && <span className="hint">설정에서 거래처/프로젝트를 먼저 등록하세요</span>}
