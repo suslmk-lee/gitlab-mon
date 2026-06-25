@@ -141,6 +141,10 @@ const ICON_PATHS: Record<string, JSX.Element> = {
     note: <><path d="M2 6h3"/><path d="M2 10h3"/><path d="M2 14h3"/><path d="M2 18h3"/><rect width="16" height="20" x="5" y="2" rx="2"/><path d="M9.5 8h5"/><path d="M9.5 12h5"/><path d="M9.5 16H14"/></>, // notebook (기록)
     search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>, // 검색
     home: <><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></>, // layout-dashboard (대시보드)
+    ai: <><path d="M12 3v2"/><path d="M12 19v2"/><path d="m5 5 1.5 1.5"/><path d="M17.5 17.5 19 19"/><path d="M3 12h2"/><path d="M19 12h2"/><path d="m5 19 1.5-1.5"/><path d="M17.5 6.5 19 5"/><circle cx="12" cy="12" r="4"/></>, // AI(별/원형)
+    users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></>, // users (팀)
+    user: <><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></>, // user (팀원)
+    company: <><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01"/><path d="M16 6h.01"/><path d="M8 10h.01"/><path d="M16 10h.01"/><path d="M8 14h.01"/><path d="M16 14h.01"/></>, // building (거래처/프로젝트)
 };
 
 function Icon({name, size = 16, className}: { name: string; size?: number; className?: string }) {
@@ -2563,19 +2567,23 @@ type SettingsSection = 'ai' | 'teams' | 'members' | 'entities';
 function SettingsView() {
     const [sec, setSec] = useState<SettingsSection>('ai');
     const [mapping, setMapping] = useState(false);
-    const subs: { id: SettingsSection; label: string }[] = [
-        {id: 'ai', label: 'AI 설정'},
-        {id: 'teams', label: '팀'},
-        {id: 'members', label: '팀원'},
-        {id: 'entities', label: '거래처/프로젝트'},
+    const subs: { id: SettingsSection; label: string; icon: string; desc: string }[] = [
+        {id: 'ai', label: 'AI 설정', icon: 'ai', desc: '제공자·API 키'},
+        {id: 'teams', label: '팀', icon: 'users', desc: '조직 팀 관리'},
+        {id: 'members', label: '팀원', icon: 'user', desc: '구성원·git 매핑'},
+        {id: 'entities', label: '거래처 / 프로젝트', icon: 'company', desc: 'GitLab·Jira·Confluence'},
     ];
     return (
         <div className="settings-wrap">
-            <div className="settings-subnav">
+            <nav className="settings-side">
+                <div className="settings-side-title">설정</div>
                 {subs.map(s => (
-                    <button key={s.id} className={`subnav-item ${sec === s.id ? 'subnav-on' : ''}`} onClick={() => setSec(s.id)}>{s.label}</button>
+                    <button key={s.id} className={`subnav-item ${sec === s.id ? 'subnav-on' : ''}`} onClick={() => setSec(s.id)}>
+                        <Icon name={s.icon} size={17} className="subnav-ic"/>
+                        <span className="subnav-text"><span className="subnav-label">{s.label}</span><span className="subnav-desc">{s.desc}</span></span>
+                    </button>
                 ))}
-            </div>
+            </nav>
             <div className="settings-body">
                 {sec === 'ai' && <div className="stats scroll"><AISettings/></div>}
                 {sec === 'teams' && <TeamsSection/>}
