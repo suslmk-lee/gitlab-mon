@@ -2500,82 +2500,121 @@ function TeamsSection() {
     );
 }
 
-// ---- 팀원 관리 (팀별 그룹) — 회의록 참석자 선택·git 매핑 소스 ----
+// ---- 팀원 관리 (리스트 + 추가/수정 모달) — 회의록 참석자 선택·git 매핑 소스 ----
 function MembersSection({onMapping}: { onMapping: () => void }) {
     const [list, setList] = useState<Member[] | null>(null);
     const [teams, setTeams] = useState<Team[]>([]);
-    const [saving, setSaving] = useState(false);
-    const [msg, setMsg] = useState('');
-    useEffect(() => {
-        GetMembers().then((ms: any) => setList(ms || []));
-        GetTeams().then((ts: any) => setTeams(ts || []));
-    }, []);
+    const [editIdx, setEditIdx] = useState<number | null>(null); // null=닫힘, -1=신규
+    const [draft, setDraft] = useState<Member>(blankMember());
+    const [busy, setBusy] = useState(false);
+    const reload = () => Promise.all([GetMembers(), GetTeams()]).then(([ms, ts]: any) => { setList(ms || []); setTeams(ts || []); });
+    useEffect(() => { reload(); }, []);
 
     const csv = (arr: string[]) => (arr || []).join(', ');
     const parse = (s: string) => s.split(/[,]+/).map(x => x.trim()).filter(Boolean);
 
     if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
-    const upd = (i: number, patch: Partial<Member>) => setList(l => l!.map((m, idx) => idx === i ? {...m, ...patch} : m));
-    const add = () => setList(l => [...l!, blankMember(teams[0]?.id || '')]);
-    const del = (i: number) => setList(l => l!.filter((_, idx) => idx !== i));
-    const save = async () => {
-        setSaving(true); setMsg('');
-        const r = await SaveMembers(list);
-        const fresh: any = await GetMembers();
-        setSaving(false);
-        setList(fresh || list);
-        setMsg(r || '저장되었습니다 ✓');
+    const openAdd = () => { setDraft(blankMember(teams[0]?.id || '')); setEditIdx(-1); };
+    const openEdit = (m: Member, i: number) => { setDraft({...m}); setEditIdx(i); };
+    const close = () => { if (!busy) setEditIdx(null); };
+    const setD = (patch: Partial<Member>) => setDraft(d => ({...d, ...patch}));
+    const saveDraft = async () => {
+        if (!draft.name.trim()) return;
+        setBusy(true);
+        const next = editIdx! >= 0 ? list.map((m, i) => i === editIdx ? draft : m) : [...list, draft];
+        await SaveMembers(next);
+        await reload();
+        setBusy(false); setEditIdx(null);
+    };
+    const delMember = async () => {
+        if (editIdx === null || editIdx < 0) { setEditIdx(null); return; }
+        setBusy(true);
+        await SaveMembers(list.filter((_, i) => i !== editIdx));
+        await reload();
+        setBusy(false); setEditIdx(null);
     };
 
-    // 팀별 그룹(팀 레지스트리 순서, 미지정은 마지막)
-    const groups: { id: string; name: string }[] = teams.map(t => ({id: t.id, name: t.name}));
-    if (list.some(m => !teams.find(t => t.id === m.team_id))) groups.push({id: '', name: '(미배정)'});
-
-    const row = (m: Member, i: number) => (
-        <section key={i} className="stat-block ent-card">
-            <div className="ent-row">
-                <input className="ent-in ent-name" placeholder="이름" value={m.name} onChange={e => upd(i, {name: e.target.value})}/>
-                <select className="jselect" value={m.team_id} onChange={e => upd(i, {team_id: e.target.value})}>
-                    <option value="">(팀 미배정)</option>
-                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <input className="ent-in" style={{maxWidth: 120}} placeholder="직책" value={m.role} onChange={e => upd(i, {role: e.target.value})}/>
-                <label className="ent-active"><input type="checkbox" checked={m.active} onChange={e => upd(i, {active: e.target.checked})}/> 활성</label>
-                <button className="map-del" title="삭제" onClick={() => del(i)}>✕</button>
-            </div>
-            <div className="ent-grid">
-                <label className="ent-field">GitLab 계정<input className="ent-in" placeholder="username" value={m.gitlab_username} onChange={e => upd(i, {gitlab_username: e.target.value})}/></label>
-                <label className="ent-field">이메일<input className="ent-in" placeholder="name@company.com" value={m.email} onChange={e => upd(i, {email: e.target.value})}/></label>
-                <label className="ent-field">git 별칭 (이름/이메일, 쉼표)<input className="ent-in" placeholder="홍길동, gildong@old.com" value={csv(m.git_aliases)} onChange={e => upd(i, {git_aliases: parse(e.target.value)})}/></label>
-            </div>
-        </section>
-    );
+    // 팀별 그룹(팀 레지스트리 순서, 미배정은 마지막)
+    const groups: { id: string; name: string; accent: string }[] = teams.map(t => ({id: t.id, name: t.name, accent: t.accent || 'var(--accent)'}));
+    if (list.some(m => !teams.find(t => t.id === m.team_id))) groups.push({id: '', name: '(미배정)', accent: 'var(--muted)'});
 
     return (
         <div className="stats scroll">
             <div className="board-head">
                 <h2>팀원</h2>
+                <span style={{flex: 1}}/>
                 <button className="btn btn-sm" onClick={onMapping}>⚙ git 사용자 매핑</button>
+                <button className="refresh-btn" onClick={openAdd} disabled={teams.length === 0}>+ 팀원 추가</button>
             </div>
-            <p className="hint">팀원을 등록하면 회의록 참석자 선택과 git 작성자 매핑(별칭 → GitLab 계정)에 쓰입니다. 팀은 위 ‘팀’ 메뉴에서 먼저 등록하세요.</p>
-            {teams.length === 0 && <div className="empty">먼저 ‘팀’ 메뉴에서 팀을 등록하면 팀원을 배정할 수 있습니다.</div>}
-            {list.length === 0 && teams.length > 0 && <div className="empty">등록된 팀원이 없습니다 — 아래에서 추가하세요</div>}
+            <p className="hint">팀원을 등록하면 회의록 참석자 선택과 git 작성자 매핑(별칭 → GitLab 계정)에 쓰입니다. 팀은 ‘팀’ 메뉴에서 먼저 등록하세요.</p>
+            {teams.length === 0 && <div className="empty">먼저 ‘팀’ 메뉴에서 팀을 등록하면 팀원을 추가할 수 있습니다.</div>}
+            {teams.length > 0 && list.length === 0 && <div className="empty">등록된 팀원이 없습니다 — ‘팀원 추가’로 시작하세요</div>}
             {groups.map(g => {
                 const inGroup = list.map((m, i) => ({m, i})).filter(({m}) => (m.team_id || '') === g.id);
                 if (inGroup.length === 0) return null;
                 return (
                     <div key={g.id || '_none'} className="member-team">
-                        <h4 className="member-team-h">{g.name} <span className="count">{inGroup.length}</span></h4>
-                        {inGroup.map(({m, i}) => row(m, i))}
+                        <h4 className="member-team-h"><span className="reg-dot" style={{background: g.accent}}/>{g.name} <span className="count">{inGroup.length}</span></h4>
+                        <div className="reg-list">
+                            {inGroup.map(({m, i}) => (
+                                <button key={m.id || i} className="reg-card" onClick={() => openEdit(m, i)}>
+                                    <span className="reg-name">{m.name}</span>
+                                    {m.role && <span className="reg-meta">{m.role}</span>}
+                                    {m.gitlab_username && <span className="reg-sub">@{m.gitlab_username}</span>}
+                                    {!m.active && <span className="reg-off">비활성</span>}
+                                    <span className="reg-edit">수정</span>
+                                </button>
+                            ))}
+                        </div>
                     </div>
                 );
             })}
-            <div className="ent-actions">
-                <button className="btn btn-sm" onClick={add} disabled={teams.length === 0}>+ 팀원 추가</button>
-                <span style={{flex: 1}}/>
-                {msg && <span className="hint">{msg}</span>}
-                <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '팀원 저장'}</button>
-            </div>
+
+            {editIdx !== null && (
+                <div className="modal-overlay" onClick={close}>
+                    <div className="modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-head">
+                            <h2 className="modal-title">{editIdx >= 0 ? '팀원 수정' : '팀원 추가'}</h2>
+                            <button className="modal-x" onClick={close}>✕</button>
+                        </div>
+                        <div className="modal-section member-form">
+                            <label className="ent-field">이름
+                                <input className="ent-in" autoFocus placeholder="이름" value={draft.name} onChange={e => setD({name: e.target.value})}/>
+                            </label>
+                            <div className="modal-form-row">
+                                <label className="ent-field grow">팀
+                                    <select className="jselect" value={draft.team_id} onChange={e => setD({team_id: e.target.value})}>
+                                        <option value="">(팀 미배정)</option>
+                                        {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                    </select>
+                                </label>
+                                <label className="ent-field grow">직책
+                                    <input className="ent-in" placeholder="예: 선임" value={draft.role} onChange={e => setD({role: e.target.value})}/>
+                                </label>
+                                <label className="ent-active"><input type="checkbox" checked={draft.active} onChange={e => setD({active: e.target.checked})}/> 활성</label>
+                            </div>
+                            <div className="modal-form-row">
+                                <label className="ent-field grow">GitLab 계정
+                                    <input className="ent-in" placeholder="username" value={draft.gitlab_username} onChange={e => setD({gitlab_username: e.target.value})}/>
+                                </label>
+                                <label className="ent-field grow">이메일
+                                    <input className="ent-in" placeholder="name@company.com" value={draft.email} onChange={e => setD({email: e.target.value})}/>
+                                </label>
+                            </div>
+                            <label className="ent-field">git 별칭 (이름/이메일, 쉼표)
+                                <input className="ent-in" placeholder="홍길동, gildong@old.com" value={csv(draft.git_aliases)} onChange={e => setD({git_aliases: parse(e.target.value)})}/>
+                            </label>
+                            <p className="hint">git 별칭은 커밋 작성자(이름/이메일)를 위 GitLab 계정으로 합쳐 통계·리포트에 반영합니다.</p>
+                        </div>
+                        <div className="modal-actions">
+                            {editIdx >= 0 && <button className="btn btn-danger" onClick={delMember} disabled={busy}>삭제</button>}
+                            <span style={{flex: 1}}/>
+                            <button className="btn" onClick={close} disabled={busy}>취소</button>
+                            <button className="refresh-btn" onClick={saveDraft} disabled={busy || !draft.name.trim()}>{busy ? '저장 중…' : '저장'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

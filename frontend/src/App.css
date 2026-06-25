@@ -1136,7 +1136,13 @@ html, body, #root {
 .reg-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
 .reg-name { font-size: 14px; font-weight: 600; }
 .reg-meta { font-size: 12px; color: var(--muted); }
+.reg-sub { font-size: 12px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, monospace; }
 .pill-sub { opacity: 0.6; font-size: 11px; }
+.member-form { display: flex; flex-direction: column; gap: 12px; }
+.member-form .modal-form-row { margin-top: 0; }
+.ent-field.grow { flex: 1; min-width: 0; }
+.ent-field .jselect { width: 100%; }
+.modal-form-row .ent-active { padding-bottom: 7px; }
 .reg-off { font-size: 11px; color: var(--muted); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--stroke); }
 .reg-edit { margin-left: auto; font-size: 12px; color: var(--muted); }
 .reg-card:hover .reg-edit { color: var(--accent); }
