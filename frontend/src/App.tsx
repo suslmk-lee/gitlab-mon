@@ -2393,34 +2393,42 @@ const blankMember = (teamId = ''): Member => ({id: '', name: '', team_id: teamId
 
 const blankTeam = (): Team => ({id: '', name: '', accent: 'var(--accent)', active: true});
 
-// ---- 팀 관리 (리스트 + 추가/수정 모달) ----
+// ---- 팀 관리 (리스트 + 추가/수정 모달, 팀에서 팀원 선택) ----
 function TeamsSection() {
     const [list, setList] = useState<Team[] | null>(null);
+    const [members, setMembers] = useState<Member[]>([]);
     const [editIdx, setEditIdx] = useState<number | null>(null); // null=닫힘, -1=신규
     const [draft, setDraft] = useState<Team>(blankTeam());
+    const [draftMembers, setDraftMembers] = useState<Member[]>([]); // 모달 내 배정 작업본
     const [busy, setBusy] = useState(false);
-    const reload = () => GetTeams().then((ts: any) => setList(ts || []));
+    const reload = () => Promise.all([GetTeams(), GetMembers()]).then(([ts, ms]: any) => { setList(ts || []); setMembers(ms || []); });
     useEffect(() => { reload(); }, []);
 
     if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
-    const openAdd = () => { setDraft(blankTeam()); setEditIdx(-1); };
-    const openEdit = (t: Team, i: number) => { setDraft({...t}); setEditIdx(i); };
+    const openAdd = () => { setDraft({...blankTeam(), id: 'team-' + Date.now().toString(36)}); setDraftMembers(members.map(m => ({...m}))); setEditIdx(-1); };
+    const openEdit = (t: Team, i: number) => { setDraft({...t}); setDraftMembers(members.map(m => ({...m}))); setEditIdx(i); };
     const close = () => { if (!busy) setEditIdx(null); };
+    const toggleMember = (id: string) => setDraftMembers(ms => ms.map(m => m.id === id ? {...m, team_id: m.team_id === draft.id ? '' : draft.id} : m));
     const saveDraft = async () => {
         if (!draft.name.trim()) return;
         setBusy(true);
-        const next = editIdx! >= 0 ? list.map((t, i) => i === editIdx ? draft : t) : [...list, draft];
-        await SaveTeams(next);
+        const nextTeams = editIdx! >= 0 ? list.map((t, i) => i === editIdx ? draft : t) : [...list, draft];
+        await SaveTeams(nextTeams);
+        await SaveMembers(draftMembers); // 배정 변경 반영
         await reload();
         setBusy(false); setEditIdx(null);
     };
     const delTeam = async () => {
         if (editIdx === null || editIdx < 0) { setEditIdx(null); return; }
         setBusy(true);
+        const tid = list[editIdx].id;
         await SaveTeams(list.filter((_, i) => i !== editIdx));
+        await SaveMembers(members.map(m => m.team_id === tid ? {...m, team_id: ''} : m)); // 소속 해제
         await reload();
         setBusy(false); setEditIdx(null);
     };
+    const memberCount = (id: string) => members.filter(m => m.team_id === id).length;
+    const assignedCount = draftMembers.filter(m => m.team_id === draft.id).length;
 
     return (
         <div className="stats scroll">
@@ -2428,7 +2436,7 @@ function TeamsSection() {
                 <h2>팀</h2>
                 <button className="refresh-btn" onClick={openAdd}>+ 팀 추가</button>
             </div>
-            <p className="hint">조직의 팀을 등록합니다. 팀원 화면에서 각 팀원을 이 팀에 배정합니다.</p>
+            <p className="hint">조직의 팀을 등록하고, 팀에서 팀원을 골라 배정합니다. (구성원 자체는 ‘팀원’ 메뉴에서 등록)</p>
             {list.length === 0
                 ? <div className="empty">등록된 팀이 없습니다 — ‘팀 추가’로 시작하세요</div>
                 : <div className="reg-list">
@@ -2436,6 +2444,7 @@ function TeamsSection() {
                         <button key={t.id || i} className="reg-card" onClick={() => openEdit(t, i)}>
                             <span className="reg-dot" style={{background: t.accent || 'var(--accent)'}}/>
                             <span className="reg-name">{t.name}</span>
+                            <span className="reg-meta">{memberCount(t.id)}명</span>
                             {!t.active && <span className="reg-off">비활성</span>}
                             <span className="reg-edit">수정</span>
                         </button>
@@ -2452,8 +2461,7 @@ function TeamsSection() {
                         <div className="modal-section">
                             <label className="ent-field">팀 이름
                                 <input className="ent-in" autoFocus value={draft.name} placeholder="예: AI 개발팀"
-                                       onChange={e => setDraft({...draft, name: e.target.value})}
-                                       onKeyDown={e => { if (e.key === 'Enter') saveDraft(); }}/>
+                                       onChange={e => setDraft({...draft, name: e.target.value})}/>
                             </label>
                             <div className="modal-form-row">
                                 <label className="ent-field">색
@@ -2461,6 +2469,23 @@ function TeamsSection() {
                                 </label>
                                 <label className="ent-active"><input type="checkbox" checked={draft.active} onChange={e => setDraft({...draft, active: e.target.checked})}/> 활성</label>
                             </div>
+                        </div>
+                        <div className="modal-section">
+                            <h3>팀원 선택 <span className="count">{assignedCount}</span></h3>
+                            {draftMembers.length === 0
+                                ? <p className="hint">‘팀원’ 메뉴에서 구성원을 먼저 등록하면 여기서 이 팀에 배정할 수 있습니다.</p>
+                                : <div className="poc-pills">
+                                    {draftMembers.map(m => {
+                                        const here = m.team_id === draft.id;
+                                        const other = m.team_id && !here ? teamNameOf(list, m.team_id) : '';
+                                        return (
+                                            <button key={m.id} type="button" className={`pill ${here ? 'pill-on' : ''}`} onClick={() => toggleMember(m.id)}>
+                                                {m.name}{other ? <span className="pill-sub"> · {other}</span> : ''}
+                                            </button>
+                                        );
+                                    })}
+                                </div>}
+                            {draftMembers.length > 0 && <p className="hint">다른 팀 소속을 선택하면 이 팀으로 이동합니다.</p>}
                         </div>
                         <div className="modal-actions">
                             {editIdx >= 0 && <button className="btn btn-danger" onClick={delTeam} disabled={busy}>삭제</button>}
