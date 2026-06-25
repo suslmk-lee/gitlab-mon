@@ -10,8 +10,8 @@ export function DeleteNote(arg1) {
   return window['go']['main']['App']['DeleteNote'](arg1);
 }
 
-export function DownloadNoteAudio(arg1) {
-  return window['go']['main']['App']['DownloadNoteAudio'](arg1);
+export function DownloadNoteAudio(arg1, arg2) {
+  return window['go']['main']['App']['DownloadNoteAudio'](arg1, arg2);
 }
 
 export function GetAIConfig() {
@@ -32,6 +32,10 @@ export function GetEntities() {
 
 export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
+}
+
+export function HasFFmpeg() {
+  return window['go']['main']['App']['HasFFmpeg']();
 }
 
 export function JiraDetail(arg1) {

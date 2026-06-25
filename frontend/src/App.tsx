@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -1965,11 +1965,13 @@ function NoteEditor({note, entities, onClose, onReload}: {
         if (b64) setAudioSrc(`data:${audioMime(n.audio_path)};base64,${b64}`);
     };
     const [dlBusy, setDlBusy] = useState(false);
-    const downloadAudio = async () => {
+    const [hasFf, setHasFf] = useState(false);
+    useEffect(() => { HasFFmpeg().then(setHasFf).catch(() => setHasFf(false)); }, []);
+    const downloadAudio = async (convert: boolean) => {
         if (!n.id) { setErr('먼저 저장하세요'); return; }
         setDlBusy(true); setErr(''); setOk('');
         try {
-            const r: any = await DownloadNoteAudio(n.id);
+            const r: any = await DownloadNoteAudio(n.id, convert);
             if (r?.error) setErr(r.error);
             else if (!r?.canceled) setOk('녹음을 저장했습니다 ✓');
         } catch (e: any) { setErr('다운로드 실패: ' + (e?.message || e)); }
@@ -2109,7 +2111,8 @@ function NoteEditor({note, entities, onClose, onReload}: {
                                 {audioSrc
                                     ? <audio className="note-audio" controls autoPlay src={audioSrc}/>
                                     : <button className="btn btn-sm" onClick={loadAudio}>▶ 녹음 듣기</button>}
-                                <button className="btn btn-sm" onClick={downloadAudio} disabled={dlBusy}>{dlBusy ? '저장 중…' : '⬇ 다운로드'}</button>
+                                <button className="btn btn-sm" onClick={() => downloadAudio(hasFf)} disabled={dlBusy} title={hasFf ? 'm4a(AAC)로 변환 — QuickTime 등 어디서나 재생' : '원본 파일 저장'}>{dlBusy ? '저장 중…' : (hasFf ? '⬇ 다운로드(m4a)' : '⬇ 다운로드')}</button>
+                                {hasFf && <button className="btn btn-sm" onClick={() => downloadAudio(false)} disabled={dlBusy} title="변환 없이 원본(webm) 저장">원본</button>}
                                 <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음(교체)</button>
                             </> : <button className="btn btn-sm rec-btn" onClick={startRec}>● 녹음 시작</button>
                         )}

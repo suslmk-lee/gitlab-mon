@@ -7,7 +7,7 @@ export function ConfluenceSpaces():Promise<Array<confluence.Space>>;
 
 export function DeleteNote(arg1:number):Promise<string>;
 
-export function DownloadNoteAudio(arg1:number):Promise<main.AudioDownloadResult>;
+export function DownloadNoteAudio(arg1:number,arg2:boolean):Promise<main.AudioDownloadResult>;
 
 export function GetAIConfig():Promise<main.AIConfig>;
 
@@ -18,6 +18,8 @@ export function GetConfig():Promise<Record<string, any>>;
 export function GetEntities():Promise<Array<main.Entity>>;
 
 export function GetSnapshot():Promise<main.Snapshot>;
+
+export function HasFFmpeg():Promise<boolean>;
 
 export function JiraDetail(arg1:string):Promise<main.JiraIssueDetail>;
 

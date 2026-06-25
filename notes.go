@@ -7,6 +7,7 @@ import (
 	"html"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -462,9 +463,27 @@ func fileSanitize(s string) string {
 	return s
 }
 
-// DownloadNoteAudio opens a native Save dialog and copies the note's recording
-// to the chosen location (streamed — handles large files without base64).
-func (a *App) DownloadNoteAudio(noteID int64) AudioDownloadResult {
+// ffmpegPath returns the ffmpeg binary path, or "" if not installed.
+func ffmpegPath() string {
+	if p, err := exec.LookPath("ffmpeg"); err == nil {
+		return p
+	}
+	for _, p := range []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// HasFFmpeg reports whether ffmpeg is available (for the m4a 변환 버튼).
+func (a *App) HasFFmpeg() bool { return ffmpegPath() != "" }
+
+// DownloadNoteAudio opens a native Save dialog and writes the note's recording
+// to the chosen location. When convert is true and ffmpeg is available, a
+// browser-recorded webm/ogg is transcoded to m4a(AAC) so it plays everywhere
+// (QuickTime 등). Otherwise the original file is streamed-copied as-is.
+func (a *App) DownloadNoteAudio(noteID int64, convert bool) AudioDownloadResult {
 	n, err := a.getNote(noteID)
 	if err != nil {
 		return AudioDownloadResult{Error: "기록을 찾을 수 없습니다: " + err.Error()}
@@ -475,14 +494,22 @@ func (a *App) DownloadNoteAudio(noteID int64) AudioDownloadResult {
 	if _, err := os.Stat(n.AudioPath); err != nil {
 		return AudioDownloadResult{Error: "녹음 파일을 찾을 수 없습니다: " + err.Error()}
 	}
-	ext := filepath.Ext(n.AudioPath) // 점 포함 (".webm")
-	defName := fileSanitize(n.Title) + ext
 	if a.ctx == nil {
 		return AudioDownloadResult{Error: "앱 컨텍스트가 준비되지 않았습니다"}
 	}
+	srcExt := strings.ToLower(filepath.Ext(n.AudioPath)) // ".webm"
+	ffmpeg := ffmpegPath()
+	// 이미 일반 재생 포맷이면 변환 불필요
+	already := srcExt == ".m4a" || srcExt == ".mp3" || srcExt == ".wav" || srcExt == ".aac"
+	doConvert := convert && ffmpeg != "" && !already
+
+	outExt := srcExt
+	if doConvert {
+		outExt = ".m4a"
+	}
 	dest, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 		Title:           "녹음 저장",
-		DefaultFilename: defName,
+		DefaultFilename: fileSanitize(n.Title) + outExt,
 	})
 	if err != nil {
 		return AudioDownloadResult{Error: err.Error()}
@@ -490,6 +517,17 @@ func (a *App) DownloadNoteAudio(noteID int64) AudioDownloadResult {
 	if dest == "" {
 		return AudioDownloadResult{Canceled: true} // 사용자가 취소
 	}
+
+	if doConvert {
+		// -vn: 영상 무시, AAC 96k(음성 충분), -movflags +faststart로 메타 정리
+		cmd := exec.CommandContext(a.ctx, ffmpeg, "-y", "-i", n.AudioPath,
+			"-vn", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", dest)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return AudioDownloadResult{Error: "변환 실패: " + err.Error() + " — " + lastLines(string(out), 2)}
+		}
+		return AudioDownloadResult{Path: dest}
+	}
+
 	in, err := os.Open(n.AudioPath)
 	if err != nil {
 		return AudioDownloadResult{Error: err.Error()}
@@ -507,4 +545,16 @@ func (a *App) DownloadNoteAudio(noteID int64) AudioDownloadResult {
 		return AudioDownloadResult{Error: err.Error()}
 	}
 	return AudioDownloadResult{Path: dest}
+}
+
+// lastLines returns the last n non-empty lines of s (for trimming ffmpeg stderr).
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	out := []string{}
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			out = append([]string{strings.TrimSpace(lines[i])}, out...)
+		}
+	}
+	return strings.Join(out, " | ")
 }
