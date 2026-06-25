@@ -5,12 +5,15 @@ import (
 	"encoding/base64"
 	"fmt"
 	"html"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"gitlab-mon/internal/confluence"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	_ "modernc.org/sqlite"
 )
@@ -434,4 +437,74 @@ func (a *App) ReadAudioBase64(path string) string {
 		return ""
 	}
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+// AudioDownloadResult is the outcome of DownloadNoteAudio.
+type AudioDownloadResult struct {
+	Path     string `json:"path"`     // 저장된 경로 (성공 시)
+	Error    string `json:"error"`    // 오류 메시지
+	Canceled bool   `json:"canceled"` // 사용자가 대화상자를 취소함
+}
+
+// fileSanitize replaces filesystem-unsafe characters for a default filename.
+func fileSanitize(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|', '\n', '\r', '\t':
+			return '_'
+		}
+		return r
+	}, s)
+	if s == "" {
+		s = "녹음"
+	}
+	return s
+}
+
+// DownloadNoteAudio opens a native Save dialog and copies the note's recording
+// to the chosen location (streamed — handles large files without base64).
+func (a *App) DownloadNoteAudio(noteID int64) AudioDownloadResult {
+	n, err := a.getNote(noteID)
+	if err != nil {
+		return AudioDownloadResult{Error: "기록을 찾을 수 없습니다: " + err.Error()}
+	}
+	if n.AudioPath == "" {
+		return AudioDownloadResult{Error: "이 기록에는 녹음이 없습니다"}
+	}
+	if _, err := os.Stat(n.AudioPath); err != nil {
+		return AudioDownloadResult{Error: "녹음 파일을 찾을 수 없습니다: " + err.Error()}
+	}
+	ext := filepath.Ext(n.AudioPath) // 점 포함 (".webm")
+	defName := fileSanitize(n.Title) + ext
+	if a.ctx == nil {
+		return AudioDownloadResult{Error: "앱 컨텍스트가 준비되지 않았습니다"}
+	}
+	dest, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "녹음 저장",
+		DefaultFilename: defName,
+	})
+	if err != nil {
+		return AudioDownloadResult{Error: err.Error()}
+	}
+	if dest == "" {
+		return AudioDownloadResult{Canceled: true} // 사용자가 취소
+	}
+	in, err := os.Open(n.AudioPath)
+	if err != nil {
+		return AudioDownloadResult{Error: err.Error()}
+	}
+	defer in.Close()
+	out, err := os.Create(dest)
+	if err != nil {
+		return AudioDownloadResult{Error: err.Error()}
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return AudioDownloadResult{Error: err.Error()}
+	}
+	if err := out.Close(); err != nil {
+		return AudioDownloadResult{Error: err.Error()}
+	}
+	return AudioDownloadResult{Path: dest}
 }

@@ -7,6 +7,8 @@ export function ConfluenceSpaces():Promise<Array<confluence.Space>>;
 
 export function DeleteNote(arg1:number):Promise<string>;
 
+export function DownloadNoteAudio(arg1:number):Promise<main.AudioDownloadResult>;
+
 export function GetAIConfig():Promise<main.AIConfig>;
 
 export function GetAuthorMappings():Promise<main.AuthorMappingData>;

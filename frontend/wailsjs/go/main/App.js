@@ -10,6 +10,10 @@ export function DeleteNote(arg1) {
   return window['go']['main']['App']['DeleteNote'](arg1);
 }
 
+export function DownloadNoteAudio(arg1) {
+  return window['go']['main']['App']['DownloadNoteAudio'](arg1);
+}
+
 export function GetAIConfig() {
   return window['go']['main']['App']['GetAIConfig']();
 }

@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -1964,6 +1964,17 @@ function NoteEditor({note, entities, onClose, onReload}: {
         const b64: string = await ReadAudioBase64(n.audio_path);
         if (b64) setAudioSrc(`data:${audioMime(n.audio_path)};base64,${b64}`);
     };
+    const [dlBusy, setDlBusy] = useState(false);
+    const downloadAudio = async () => {
+        if (!n.id) { setErr('먼저 저장하세요'); return; }
+        setDlBusy(true); setErr(''); setOk('');
+        try {
+            const r: any = await DownloadNoteAudio(n.id);
+            if (r?.error) setErr(r.error);
+            else if (!r?.canceled) setOk('녹음을 저장했습니다 ✓');
+        } catch (e: any) { setErr('다운로드 실패: ' + (e?.message || e)); }
+        setDlBusy(false);
+    };
     const blobToB64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onloadend = () => { const s = String(r.result); resolve(s.slice(s.indexOf(',') + 1)); };
@@ -2098,6 +2109,7 @@ function NoteEditor({note, entities, onClose, onReload}: {
                                 {audioSrc
                                     ? <audio className="note-audio" controls autoPlay src={audioSrc}/>
                                     : <button className="btn btn-sm" onClick={loadAudio}>▶ 녹음 듣기</button>}
+                                <button className="btn btn-sm" onClick={downloadAudio} disabled={dlBusy}>{dlBusy ? '저장 중…' : '⬇ 다운로드'}</button>
                                 <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음(교체)</button>
                             </> : <button className="btn btn-sm rec-btn" onClick={startRec}>● 녹음 시작</button>
                         )}

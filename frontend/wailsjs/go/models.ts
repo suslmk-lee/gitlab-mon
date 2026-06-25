@@ -514,6 +514,22 @@ export namespace main {
 	        this.username = source["username"];
 	    }
 	}
+	export class AudioDownloadResult {
+	    path: string;
+	    error: string;
+	    canceled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new AudioDownloadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.error = source["error"];
+	        this.canceled = source["canceled"];
+	    }
+	}
 	export class GLUserLite {
 	    username: string;
 	    name: string;
