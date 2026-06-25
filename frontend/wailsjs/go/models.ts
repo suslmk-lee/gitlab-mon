@@ -682,7 +682,7 @@ export namespace main {
 	export class Member {
 	    id: string;
 	    name: string;
-	    team: string;
+	    team_id: string;
 	    role: string;
 	    email: string;
 	    gitlab_username: string;
@@ -697,7 +697,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
-	        this.team = source["team"];
+	        this.team_id = source["team_id"];
 	        this.role = source["role"];
 	        this.email = source["email"];
 	        this.gitlab_username = source["gitlab_username"];
@@ -851,6 +851,24 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class Team {
+	    id: string;
+	    name: string;
+	    accent: string;
+	    active: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Team(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.accent = source["accent"];
+	        this.active = source["active"];
+	    }
 	}
 	
 	export class WeekDay {

@@ -12,7 +12,7 @@ import (
 type Member struct {
 	ID             string   `json:"id"`
 	Name           string   `json:"name"`
-	Team           string   `json:"team"`            // 팀명 (그룹핑용)
+	TeamID         string   `json:"team_id"`         // 소속 팀 ID (teams.json 참조)
 	Role           string   `json:"role"`            // 직책/역할 (선택)
 	Email          string   `json:"email"`           // 회사 이메일 (선택)
 	GitLabUsername string   `json:"gitlab_username"` // git 매핑 대상 계정
@@ -77,7 +77,7 @@ func (a *App) SaveMembers(ms []Member) string {
 		if m.Name == "" {
 			continue
 		}
-		m.Team = strings.TrimSpace(m.Team)
+		m.TeamID = strings.TrimSpace(m.TeamID)
 		m.GitLabUsername = strings.TrimSpace(m.GitLabUsername)
 		// git 별칭 정리(공백 제거, 빈 값 제외)
 		cleaned := make([]string, 0, len(m.GitAliases))

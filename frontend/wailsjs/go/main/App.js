@@ -42,6 +42,10 @@ export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
 }
 
+export function GetTeams() {
+  return window['go']['main']['App']['GetTeams']();
+}
+
 export function HasFFmpeg() {
   return window['go']['main']['App']['HasFFmpeg']();
 }
@@ -104,6 +108,10 @@ export function SaveNote(arg1) {
 
 export function SaveNoteAudio(arg1, arg2, arg3) {
   return window['go']['main']['App']['SaveNoteAudio'](arg1, arg2, arg3);
+}
+
+export function SaveTeams(arg1) {
+  return window['go']['main']['App']['SaveTeams'](arg1);
 }
 
 export function ShareNote(arg1, arg2) {

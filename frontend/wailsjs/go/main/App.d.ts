@@ -23,6 +23,8 @@ export function GetMembers():Promise<Array<main.Member>>;
 
 export function GetSnapshot():Promise<main.Snapshot>;
 
+export function GetTeams():Promise<Array<main.Team>>;
+
 export function HasFFmpeg():Promise<boolean>;
 
 export function HasPython():Promise<boolean>;
@@ -54,6 +56,8 @@ export function SaveMembers(arg1:Array<main.Member>):Promise<string>;
 export function SaveNote(arg1:main.Note):Promise<main.NoteResult>;
 
 export function SaveNoteAudio(arg1:number,arg2:string,arg3:string):Promise<main.NoteResult>;
+
+export function SaveTeams(arg1:Array<main.Team>):Promise<string>;
 
 export function ShareNote(arg1:number,arg2:string):Promise<main.NoteResult>;
 
