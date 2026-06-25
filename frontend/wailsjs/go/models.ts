@@ -677,6 +677,7 @@ export namespace main {
 	    updated_at: string;
 	    confluence_id: string;
 	    confluence_url: string;
+	    audio_path: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Note(source);
@@ -697,6 +698,7 @@ export namespace main {
 	        this.updated_at = source["updated_at"];
 	        this.confluence_id = source["confluence_id"];
 	        this.confluence_url = source["confluence_url"];
+	        this.audio_path = source["audio_path"];
 	    }
 	}
 	export class NoteAI {

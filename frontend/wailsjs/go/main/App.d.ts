@@ -25,6 +25,8 @@ export function ListNotes(arg1:string):Promise<Array<main.Note>>;
 
 export function OpenURL(arg1:string):Promise<void>;
 
+export function ReadAudioBase64(arg1:string):Promise<string>;
+
 export function Refresh():Promise<void>;
 
 export function SaveAIConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
@@ -38,6 +40,8 @@ export function SaveConfig(arg1:string,arg2:string):Promise<string>;
 export function SaveEntities(arg1:Array<main.Entity>):Promise<string>;
 
 export function SaveNote(arg1:main.Note):Promise<main.NoteResult>;
+
+export function SaveNoteAudio(arg1:number,arg2:string,arg3:string):Promise<main.NoteResult>;
 
 export function ShareNote(arg1:number,arg2:string):Promise<main.NoteResult>;
 

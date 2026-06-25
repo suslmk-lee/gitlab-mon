@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -42,9 +42,14 @@ interface Note {
     id: number; kind: string; title: string; occurred_at: string;
     participants: string; entity_ids: string[]; summary: string;
     decisions: string; action_items: string;
-    created_at: string; updated_at: string; confluence_id: string; confluence_url: string;
+    created_at: string; updated_at: string; confluence_id: string; confluence_url: string; audio_path: string;
 }
 interface CfSpace { key: string; name: string }
+const audioMime = (p: string) => {
+    const e = p.toLowerCase().split('.').pop();
+    return e === 'mp4' || e === 'm4a' ? 'audio/mp4' : e === 'ogg' ? 'audio/ogg' : e === 'wav' ? 'audio/wav' : 'audio/webm';
+};
+const fmtRec = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 interface Snapshot {
     fetched_at: string; gitlab_url: string;
     version: { version: string } | null; stats: Stats | null;
@@ -1894,7 +1899,7 @@ function Markdown({text}: { text: string }) {
 function blankNote(): Note {
     return {id: 0, kind: 'meeting', title: '', occurred_at: new Date().toISOString().slice(0, 10),
         participants: '', entity_ids: [], summary: '', decisions: '', action_items: '',
-        created_at: '', updated_at: '', confluence_id: '', confluence_url: ''};
+        created_at: '', updated_at: '', confluence_id: '', confluence_url: '', audio_path: ''};
 }
 
 function NoteEditor({note, entities, onClose, onReload}: {
@@ -1908,6 +1913,62 @@ function NoteEditor({note, entities, onClose, onReload}: {
     const [spaces, setSpaces] = useState<CfSpace[]>([]);
     const [space, setSpace] = useState('');
     const [mode, setMode] = useState<'edit' | 'preview'>('edit');
+    // 녹음 상태
+    const [recState, setRecState] = useState<'idle' | 'recording' | 'paused'>('idle');
+    const [recBlob, setRecBlob] = useState<Blob | null>(null);
+    const [recURL, setRecURL] = useState('');
+    const [recExt, setRecExt] = useState('webm');
+    const [recSecs, setRecSecs] = useState(0);
+    const [audioSrc, setAudioSrc] = useState(''); // 저장된 녹음 재생용 data URL
+    const mrRef = useRef<MediaRecorder | null>(null);
+    const chunksRef = useRef<Blob[]>([]);
+    const streamRef = useRef<MediaStream | null>(null);
+    const timerRef = useRef<number | undefined>(undefined);
+    useEffect(() => () => { // 언마운트 정리
+        try { mrRef.current?.state !== 'inactive' && mrRef.current?.stop(); } catch {}
+        streamRef.current?.getTracks().forEach(t => t.stop());
+        if (timerRef.current) clearInterval(timerRef.current);
+    }, []);
+    const tick = () => { timerRef.current = window.setInterval(() => setRecSecs(s => s + 1), 1000); };
+    const startRec = async () => {
+        setErr('');
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({audio: true});
+            streamRef.current = stream;
+            const mime = (window as any).MediaRecorder?.isTypeSupported?.('audio/webm') ? 'audio/webm'
+                : (window as any).MediaRecorder?.isTypeSupported?.('audio/mp4') ? 'audio/mp4' : '';
+            const mr = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined);
+            chunksRef.current = [];
+            mr.ondataavailable = e => { if (e.data && e.data.size) chunksRef.current.push(e.data); };
+            mr.onstop = () => {
+                const type = mr.mimeType || mime || 'audio/webm';
+                const blob = new Blob(chunksRef.current, {type});
+                setRecBlob(blob);
+                setRecURL(URL.createObjectURL(blob));
+                setRecExt(type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm');
+                streamRef.current?.getTracks().forEach(t => t.stop());
+            };
+            mrRef.current = mr;
+            mr.start();
+            setRecSecs(0); setRecState('recording'); setAudioSrc(''); tick();
+        } catch (e: any) {
+            setErr('마이크를 사용할 수 없습니다 — 권한을 확인하세요 (' + (e?.message || e) + ')');
+        }
+    };
+    const pauseRec = () => { try { mrRef.current?.pause(); } catch {} setRecState('paused'); if (timerRef.current) clearInterval(timerRef.current); };
+    const resumeRec = () => { try { mrRef.current?.resume(); } catch {} setRecState('recording'); tick(); };
+    const stopRec = () => { try { mrRef.current?.stop(); } catch {} setRecState('idle'); if (timerRef.current) clearInterval(timerRef.current); };
+    const discardRec = () => { setRecBlob(null); setRecURL(''); };
+    const loadAudio = async () => {
+        const b64: string = await ReadAudioBase64(n.audio_path);
+        if (b64) setAudioSrc(`data:${audioMime(n.audio_path)};base64,${b64}`);
+    };
+    const blobToB64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onloadend = () => { const s = String(r.result); resolve(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+    });
     const set = (patch: Partial<Note>) => { setN(prev => ({...prev, ...patch})); setOk(''); };
     const toggleEntity = (id: string) => set({entity_ids: n.entity_ids.includes(id) ? n.entity_ids.filter(x => x !== id) : [...n.entity_ids, id]});
 
@@ -1917,9 +1978,18 @@ function NoteEditor({note, entities, onClose, onReload}: {
         if (!n.title.trim()) { setErr('제목을 입력하세요'); return; }
         setSaving(true); setErr('');
         const r: any = await SaveNote(n);
+        if (r?.error) { setSaving(false); setErr(r.error); return; }
+        let saved: Note = r?.note || n;
+        if (recBlob) { // 대기 중인 녹음을 노트에 첨부
+            try {
+                const b64 = await blobToB64(recBlob);
+                const ar: any = await SaveNoteAudio(saved.id, b64, recExt);
+                if (ar?.error) { setErr(ar.error); }
+                else { if (ar?.note) saved = ar.note; setRecBlob(null); setRecURL(''); }
+            } catch (e: any) { setErr('녹음 첨부 실패: ' + (e?.message || e)); }
+        }
         setSaving(false);
-        if (r?.error) { setErr(r.error); return; }
-        if (r?.note) setN(r.note); // id 유지 — 닫지 않고 공유까지 이어서
+        setN(saved);
         setOk('저장됨 ✓');
         onReload();
     };
@@ -1998,6 +2068,35 @@ function NoteEditor({note, entities, onClose, onReload}: {
                         : <div className="note-preview note-area-lg">{n.summary.trim() ? <Markdown text={n.summary}/> : <span className="hint">내용 없음</span>}</div>}
                 </div>
 
+                <div className="ent-field">녹음
+                    <div className="note-rec">
+                        {recState === 'recording' && <>
+                            <span className="rec-dot"/><span className="rec-time">{fmtRec(recSecs)}</span>
+                            <button className="btn btn-sm" onClick={pauseRec}>⏸ 일시정지</button>
+                            <button className="btn btn-sm" onClick={stopRec}>⏹ 중지</button>
+                        </>}
+                        {recState === 'paused' && <>
+                            <span className="rec-time">{fmtRec(recSecs)} · 일시정지됨</span>
+                            <button className="btn btn-sm" onClick={resumeRec}>▶ 재개</button>
+                            <button className="btn btn-sm" onClick={stopRec}>⏹ 중지</button>
+                        </>}
+                        {recState === 'idle' && recBlob && <>
+                            <audio className="note-audio" controls src={recURL}/>
+                            <span className="hint">저장 시 첨부됩니다</span>
+                            <button className="btn btn-sm" onClick={discardRec}>삭제</button>
+                            <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음</button>
+                        </>}
+                        {recState === 'idle' && !recBlob && (
+                            n.audio_path ? <>
+                                {audioSrc
+                                    ? <audio className="note-audio" controls autoPlay src={audioSrc}/>
+                                    : <button className="btn btn-sm" onClick={loadAudio}>▶ 녹음 듣기</button>}
+                                <button className="btn btn-sm rec-btn" onClick={startRec}>● 다시 녹음(교체)</button>
+                            </> : <button className="btn btn-sm rec-btn" onClick={startRec}>● 녹음 시작</button>
+                        )}
+                    </div>
+                </div>
+
                 {n.id > 0 && (
                     <div className="note-share">
                         {n.confluence_url ? (
@@ -2062,6 +2161,7 @@ function RecordsView({snap}: { snap: Snapshot }) {
                     ))}
                 </div>
                 <input className="search" placeholder="제목·내용·참석자·엔티티 검색" value={query} onChange={e => setQuery(e.target.value)}/>
+                <button className="btn btn-sm" onClick={() => setEditing({...blankNote(), kind: 'meeting'})}>🎙 녹음</button>
                 <button className="btn btn-sm" onClick={() => setEditing(blankNote())}>+ 새 기록</button>
             </div>
 
@@ -2072,6 +2172,7 @@ function RecordsView({snap}: { snap: Snapshot }) {
                     <div className="note-head">
                         <span className={`note-kind note-${n.kind}`}>{n.kind === 'call' ? '통화' : '회의'}</span>
                         <b className="note-title">{n.title || '(제목 없음)'}</b>
+                        {n.audio_path && <span className="note-shared" title="녹음 첨부">🎙</span>}
                         {n.confluence_url && <span className="note-shared" title="Confluence 공유됨">🔗</span>}
                         <span className="time">{(n.occurred_at || '').slice(0, 10)}</span>
                     </div>

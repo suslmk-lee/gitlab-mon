@@ -46,6 +46,10 @@ export function OpenURL(arg1) {
   return window['go']['main']['App']['OpenURL'](arg1);
 }
 
+export function ReadAudioBase64(arg1) {
+  return window['go']['main']['App']['ReadAudioBase64'](arg1);
+}
+
 export function Refresh() {
   return window['go']['main']['App']['Refresh']();
 }
@@ -72,6 +76,10 @@ export function SaveEntities(arg1) {
 
 export function SaveNote(arg1) {
   return window['go']['main']['App']['SaveNote'](arg1);
+}
+
+export function SaveNoteAudio(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveNoteAudio'](arg1, arg2, arg3);
 }
 
 export function ShareNote(arg1, arg2) {

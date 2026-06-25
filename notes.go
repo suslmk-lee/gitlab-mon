@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"os"
@@ -30,6 +31,7 @@ type Note struct {
 	UpdatedAt     string   `json:"updated_at"`
 	ConfluenceID  string   `json:"confluence_id"`
 	ConfluenceURL string   `json:"confluence_url"`
+	AudioPath     string   `json:"audio_path"` // 녹음 파일 경로 (있으면)
 }
 
 // NoteResult wraps a SaveNote result (saved note + error message for the UI).
@@ -51,7 +53,8 @@ CREATE TABLE IF NOT EXISTS notes (
   created_at TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT '',
   confluence_id TEXT NOT NULL DEFAULT '',
-  confluence_url TEXT NOT NULL DEFAULT ''
+  confluence_url TEXT NOT NULL DEFAULT '',
+  audio_path TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS note_entities (
   note_id INTEGER NOT NULL,
@@ -85,6 +88,8 @@ func (a *App) openNotesDB() {
 		db.Close()
 		return
 	}
+	// 마이그레이션: 구버전 테이블에 audio_path 추가 (이미 있으면 에러 무시)
+	_, _ = db.Exec(`ALTER TABLE notes ADD COLUMN audio_path TEXT NOT NULL DEFAULT ''`)
 	a.mu.Lock()
 	a.db = db
 	a.mu.Unlock()
@@ -118,7 +123,7 @@ func (a *App) ListNotes(entityID string) []Note {
 	if db == nil {
 		return []Note{}
 	}
-	q := `SELECT id,kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url FROM notes`
+	q := `SELECT id,kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url,audio_path FROM notes`
 	var args []any
 	if entityID != "" {
 		q += ` WHERE id IN (SELECT note_id FROM note_entities WHERE entity_id=?)`
@@ -132,7 +137,7 @@ func (a *App) ListNotes(entityID string) []Note {
 	out := []Note{}
 	for rows.Next() {
 		var n Note
-		if err := rows.Scan(&n.ID, &n.Kind, &n.Title, &n.OccurredAt, &n.Participants, &n.Summary, &n.Decisions, &n.ActionItems, &n.CreatedAt, &n.UpdatedAt, &n.ConfluenceID, &n.ConfluenceURL); err != nil {
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Title, &n.OccurredAt, &n.Participants, &n.Summary, &n.Decisions, &n.ActionItems, &n.CreatedAt, &n.UpdatedAt, &n.ConfluenceID, &n.ConfluenceURL, &n.AudioPath); err != nil {
 			continue
 		}
 		n.EntityIDs = []string{}
@@ -186,16 +191,16 @@ func (a *App) SaveNote(n Note) NoteResult {
 
 	if n.ID == 0 {
 		n.CreatedAt = now
-		res, err := tx.Exec(`INSERT INTO notes(kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			n.Kind, n.Title, n.OccurredAt, n.Participants, n.Summary, n.Decisions, n.ActionItems, n.CreatedAt, n.UpdatedAt, n.ConfluenceID, n.ConfluenceURL)
+		res, err := tx.Exec(`INSERT INTO notes(kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url,audio_path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			n.Kind, n.Title, n.OccurredAt, n.Participants, n.Summary, n.Decisions, n.ActionItems, n.CreatedAt, n.UpdatedAt, n.ConfluenceID, n.ConfluenceURL, n.AudioPath)
 		if err != nil {
 			return NoteResult{Error: err.Error()}
 		}
 		n.ID, _ = res.LastInsertId()
 	} else {
 		_ = tx.QueryRow(`SELECT created_at FROM notes WHERE id=?`, n.ID).Scan(&n.CreatedAt) // created_at 보존
-		if _, err := tx.Exec(`UPDATE notes SET kind=?,title=?,occurred_at=?,participants=?,summary=?,decisions=?,action_items=?,updated_at=?,confluence_id=?,confluence_url=? WHERE id=?`,
-			n.Kind, n.Title, n.OccurredAt, n.Participants, n.Summary, n.Decisions, n.ActionItems, n.UpdatedAt, n.ConfluenceID, n.ConfluenceURL, n.ID); err != nil {
+		if _, err := tx.Exec(`UPDATE notes SET kind=?,title=?,occurred_at=?,participants=?,summary=?,decisions=?,action_items=?,updated_at=?,confluence_id=?,confluence_url=?,audio_path=? WHERE id=?`,
+			n.Kind, n.Title, n.OccurredAt, n.Participants, n.Summary, n.Decisions, n.ActionItems, n.UpdatedAt, n.ConfluenceID, n.ConfluenceURL, n.AudioPath, n.ID); err != nil {
 			return NoteResult{Error: err.Error()}
 		}
 	}
@@ -224,8 +229,8 @@ func (a *App) getNote(id int64) (Note, error) {
 		return Note{}, fmt.Errorf("로컬 저장소가 준비되지 않았습니다")
 	}
 	var n Note
-	err := db.QueryRow(`SELECT id,kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url FROM notes WHERE id=?`, id).
-		Scan(&n.ID, &n.Kind, &n.Title, &n.OccurredAt, &n.Participants, &n.Summary, &n.Decisions, &n.ActionItems, &n.CreatedAt, &n.UpdatedAt, &n.ConfluenceID, &n.ConfluenceURL)
+	err := db.QueryRow(`SELECT id,kind,title,occurred_at,participants,summary,decisions,action_items,created_at,updated_at,confluence_id,confluence_url,audio_path FROM notes WHERE id=?`, id).
+		Scan(&n.ID, &n.Kind, &n.Title, &n.OccurredAt, &n.Participants, &n.Summary, &n.Decisions, &n.ActionItems, &n.CreatedAt, &n.UpdatedAt, &n.ConfluenceID, &n.ConfluenceURL, &n.AudioPath)
 	if err != nil {
 		return Note{}, err
 	}
@@ -361,15 +366,72 @@ func (a *App) SummarizeNote(n Note) NoteAI {
 	return NoteAI{Content: strings.TrimSpace(txt)}
 }
 
-// DeleteNote removes a note and its entity links. Returns "" on success.
+// DeleteNote removes a note, its entity links, and its audio file. Returns "" on success.
 func (a *App) DeleteNote(id int64) string {
 	db := a.notesDB()
 	if db == nil {
 		return "로컬 저장소가 준비되지 않았습니다"
 	}
+	var audio string
+	_ = db.QueryRow(`SELECT audio_path FROM notes WHERE id=?`, id).Scan(&audio)
 	if _, err := db.Exec(`DELETE FROM notes WHERE id=?`, id); err != nil {
 		return err.Error()
 	}
 	_, _ = db.Exec(`DELETE FROM note_entities WHERE note_id=?`, id)
+	if audio != "" {
+		_ = os.Remove(audio)
+	}
 	return ""
+}
+
+// audioDir returns (creating) the local recordings directory.
+func audioDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	d := filepath.Join(dir, "gitlab-mon", "audio")
+	return d, os.MkdirAll(d, 0o700)
+}
+
+// SaveNoteAudio writes a base64 recording to a file and links it to the note.
+// ext is the extension without dot (webm/m4a/mp4/wav...).
+func (a *App) SaveNoteAudio(noteID int64, b64, ext string) NoteResult {
+	n, err := a.getNote(noteID)
+	if err != nil {
+		return NoteResult{Error: "기록을 찾을 수 없습니다: " + err.Error()}
+	}
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return NoteResult{Error: "오디오 디코드 실패: " + err.Error()}
+	}
+	if len(data) == 0 {
+		return NoteResult{Error: "녹음 데이터가 비었습니다"}
+	}
+	dir, err := audioDir()
+	if err != nil {
+		return NoteResult{Error: err.Error()}
+	}
+	ext = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+	if ext == "" {
+		ext = "webm"
+	}
+	path := filepath.Join(dir, fmt.Sprintf("note-%d-%d.%s", noteID, time.Now().Unix(), ext))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return NoteResult{Error: err.Error()}
+	}
+	if n.AudioPath != "" && n.AudioPath != path {
+		_ = os.Remove(n.AudioPath) // 교체 시 이전 파일 정리
+	}
+	n.AudioPath = path
+	return a.SaveNote(n)
+}
+
+// ReadAudioBase64 returns an audio file's bytes as base64 for in-app playback.
+func (a *App) ReadAudioBase64(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(b)
 }

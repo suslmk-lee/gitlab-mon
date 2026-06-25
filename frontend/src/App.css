@@ -1093,3 +1093,12 @@ html, body, #root {
 }
 .note-share-label, .note-shared-on { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #2dd4bf; }
 .note-share .icon { vertical-align: -2px; }
+.note-rec {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 5px;
+    padding: 8px 12px; border: 1px solid var(--stroke); border-radius: 10px; background: rgba(0, 0, 0, 0.18);
+}
+.rec-btn { color: var(--red); }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--red); box-shadow: 0 0 8px var(--red); animation: rec-pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+@keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.rec-time { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 13px; font-weight: 700; color: var(--red); }
+.note-audio { height: 34px; max-width: 280px; }
