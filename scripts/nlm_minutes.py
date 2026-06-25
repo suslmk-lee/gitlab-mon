@@ -45,7 +45,7 @@ def emit(content: str = "", error: str = "") -> None:
 async def analyze(audio_path: str, notebook_name: str, wait_timeout: float) -> str:
     from notebooklm import NotebookLMClient  # 호출 전 main에서 설치 여부 확인
 
-    async with await NotebookLMClient.from_storage() as client:
+    async with NotebookLMClient.from_storage() as client:
         nb = await client.notebooks.create(notebook_name)
         try:
             await client.sources.add_file(

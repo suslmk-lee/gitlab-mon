@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,7 +90,26 @@ func (a *App) GenerateMinutesFromAudio(noteID int64) NoteAI {
 	ctx, cancel := context.WithTimeout(base, 25*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, py, script, n.AudioPath, name, "1200")
+	// NotebookLM은 mp3/m4a/wav만 받는다. webm/ogg 등은 mp3로 변환해 업로드.
+	upload := n.AudioPath
+	ext := strings.ToLower(filepath.Ext(n.AudioPath))
+	accepted := ext == ".mp3" || ext == ".m4a" || ext == ".wav" || ext == ".aac"
+	if !accepted {
+		ff := ffmpegPath()
+		if ff == "" {
+			return NoteAI{Error: "NotebookLM은 " + ext + " 업로드를 지원하지 않습니다 — 변환에 ffmpeg가 필요합니다"}
+		}
+		tmp := filepath.Join(os.TempDir(), fmt.Sprintf("qh-nlm-%d.mp3", n.ID))
+		cv := exec.CommandContext(ctx, ff, "-y", "-i", n.AudioPath,
+			"-vn", "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k", tmp)
+		if out, err := cv.CombinedOutput(); err != nil {
+			return NoteAI{Error: "업로드용 변환 실패: " + err.Error() + " — " + lastLines(string(out), 2)}
+		}
+		defer os.Remove(tmp)
+		upload = tmp
+	}
+
+	cmd := exec.CommandContext(ctx, py, script, upload, name, "1200")
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
