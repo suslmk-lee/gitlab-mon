@@ -109,7 +109,9 @@ func (a *App) GetAuthorMappings() AuthorMappingData {
 	}
 	a.mu.Unlock()
 
-	resolve := buildUserResolver(users, aliases)
+	// 해석엔 멤버 파생 별칭까지 반영(멤버로 매핑된 작성자는 unmapped에서 제외).
+	// 단 아래 "현재 매핑" 목록(aliasList)은 수동 별칭(aliases)만 표시한다.
+	resolve := buildUserResolver(users, a.effectiveAliases())
 	glUsers := make(map[string]bool, len(users))
 	for _, u := range users {
 		glUsers[u.Username] = true

@@ -34,6 +34,10 @@ export function GetEntities() {
   return window['go']['main']['App']['GetEntities']();
 }
 
+export function GetMembers() {
+  return window['go']['main']['App']['GetMembers']();
+}
+
 export function GetSnapshot() {
   return window['go']['main']['App']['GetSnapshot']();
 }
@@ -88,6 +92,10 @@ export function SaveConfig(arg1, arg2) {
 
 export function SaveEntities(arg1) {
   return window['go']['main']['App']['SaveEntities'](arg1);
+}
+
+export function SaveMembers(arg1) {
+  return window['go']['main']['App']['SaveMembers'](arg1);
 }
 
 export function SaveNote(arg1) {

@@ -109,6 +109,7 @@ type App struct {
 	confluenceCache     map[string]*confluence.Page // page id → page
 	confluenceFetchedAt time.Time
 	entities            []Entity // 거래처/프로젝트 레지스트리 (entities.json)
+	members             []Member // 조직/팀원 레지스트리 (members.json)
 	db                  *sql.DB  // 로컬 기록 저장소 (회의/통화 노트)
 	cycle               int      // poll cycle counter
 	lastSig             uint64   // signature of the last published snapshot
@@ -149,6 +150,7 @@ func (a *App) startup(ctx context.Context) {
 	a.loadCommitsCache()
 	a.loadAliases()
 	a.loadEntities()
+	a.loadMembers()
 	a.openNotesDB()
 	a.loadJiraCache()
 	a.loadConfluenceCache()

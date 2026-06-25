@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -719,6 +719,10 @@ interface Entity {
     id: string; name: string; kind: string;
     gitlab_groups: string[]; jira_keys: string[]; confluence_query: string;
     aliases: string[]; accent: string; active: boolean;
+}
+interface Member {
+    id: string; name: string; team: string; role: string; email: string;
+    gitlab_username: string; git_aliases: string[]; active: boolean;
 }
 const entAccent = (e: Entity) => e.accent || 'var(--accent)';
 const glInEntity = (e: Entity, path: string) => {
@@ -1600,6 +1604,7 @@ interface GLUserLite { username: string; name: string }
 function AuthorMappingModal({onClose, onSaved}: { onClose: () => void; onSaved: () => void }) {
     const [data, setData] = useState<{ aliases: AliasEntry[]; unmapped: UnmappedAuthor[]; users: GLUserLite[] } | null>(null);
     const [aliases, setAliases] = useState<Map<string, string>>(new Map()); // key(email/name) → username
+    const [members, setMembers] = useState<Member[]>([]);
     const [saving, setSaving] = useState(false);
     const [warn, setWarn] = useState('');
 
@@ -1610,6 +1615,7 @@ function AuthorMappingModal({onClose, onSaved}: { onClose: () => void; onSaved: 
             (d.aliases ?? []).forEach((a: AliasEntry) => m.set(a.key, a.username));
             setAliases(m);
         });
+        GetMembers().then((ms: any) => setMembers(ms || []));
     }, []);
 
     const keyOf = (au: UnmappedAuthor) => (au.email || au.name).toLowerCase();
@@ -1638,6 +1644,8 @@ function AuthorMappingModal({onClose, onSaved}: { onClose: () => void; onSaved: 
     }
 
     const users = data.users;
+    const memberTargets = members.filter(m => m.active && m.gitlab_username.trim())
+        .sort((a, b) => (a.team || '').localeCompare(b.team || '', 'ko') || a.name.localeCompare(b.name, 'ko'));
     const currentRows = [...aliases.entries()].sort((a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
 
     return (
@@ -1662,7 +1670,12 @@ function AuthorMappingModal({onClose, onSaved}: { onClose: () => void; onSaved: 
                             <span className="map-commits">{au.commits} 커밋</span>
                             <select className="jselect" value={aliases.get(keyOf(au)) ?? ''} onChange={e => assign(au, e.target.value)}>
                                 <option value="">— 그대로 두기 —</option>
-                                {users.map(u => <option key={u.username} value={u.username}>{u.username}{u.name ? ` (${u.name})` : ''}</option>)}
+                                {memberTargets.length > 0 && <optgroup label="팀원">
+                                    {memberTargets.map(m => <option key={'m-' + m.id} value={m.gitlab_username}>{m.name}{m.team ? ` · ${m.team}` : ''} → {m.gitlab_username}</option>)}
+                                </optgroup>}
+                                <optgroup label="GitLab 사용자">
+                                    {users.map(u => <option key={u.username} value={u.username}>{u.username}{u.name ? ` (${u.name})` : ''}</option>)}
+                                </optgroup>
                             </select>
                         </div>
                     ))}
@@ -2022,6 +2035,15 @@ function NoteEditor({note, entities, onClose, onReload}: {
     const toggleEntity = (id: string) => { const cur = n.entity_ids || []; set({entity_ids: cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id]}); };
 
     useEffect(() => { ConfluenceSpaces().then((s: any) => setSpaces(s || [])); }, []);
+    const [members, setMembers] = useState<Member[]>([]);
+    useEffect(() => { GetMembers().then((ms: any) => setMembers(ms || [])); }, []);
+    const partList = () => n.participants.split(',').map(s => s.trim()).filter(Boolean);
+    const toggleParticipant = (name: string) => {
+        const cur = partList();
+        set({participants: (cur.includes(name) ? cur.filter(x => x !== name) : [...cur, name]).join(', ')});
+    };
+    const partTeams = Array.from(new Set(members.filter(m => m.active).map(m => m.team.trim() || '(미지정)')));
+    partTeams.sort((a, b) => a === '(미지정)' ? 1 : b === '(미지정)' ? -1 : a.localeCompare(b, 'ko'));
 
     const save = async () => {
         if (!n.title.trim()) { setErr('제목을 입력하세요'); return; }
@@ -2092,6 +2114,22 @@ function NoteEditor({note, entities, onClose, onReload}: {
                     <label className="ent-field">일시<input className="ent-in" type="date" value={(n.occurred_at || '').slice(0, 10)} onChange={e => set({occurred_at: e.target.value})}/></label>
                     <label className="ent-field note-grow">참석자 / 상대<input className="ent-in" placeholder="이름, ..." value={n.participants} onChange={e => set({participants: e.target.value})}/></label>
                 </div>
+                {members.filter(m => m.active).length > 0 && (
+                    <div className="ent-field">팀원에서 선택
+                        <div className="member-pick">
+                            {partTeams.map(team => (
+                                <div key={team} className="member-pick-group">
+                                    <span className="member-pick-team">{team}</span>
+                                    {members.filter(m => m.active && (m.team.trim() || '(미지정)') === team).map(m => (
+                                        <button key={m.id} type="button"
+                                                className={`pill ${partList().includes(m.name) ? 'pill-on' : ''}`}
+                                                onClick={() => toggleParticipant(m.name)}>{m.name}</button>
+                                    ))}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 <div className="ent-field">거래처 / 프로젝트
                     <div className="poc-pills">
                         {entities.filter(e => e.active).map(e => (
@@ -2321,6 +2359,73 @@ const ACCENTS = [
 // 유니코드 문자(한글 등)·숫자는 보존 — 한글명도 고유 id가 되도록(빈 경우만 'entity', 백엔드가 중복 접미사 처리)
 const slug = (s: string) => s.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]+/gu, '').replace(/^-+|-+$/g, '') || 'entity';
 
+const blankMember = (): Member => ({id: '', name: '', team: '', role: '', email: '', gitlab_username: '', git_aliases: [], active: true});
+
+// ---- 조직/팀원 관리 (팀별 그룹) — 회의록 참석자 선택·git 매핑 소스 ----
+function MembersSection() {
+    const [list, setList] = useState<Member[] | null>(null);
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg] = useState('');
+    useEffect(() => { GetMembers().then((ms: any) => setList(ms || [])); }, []);
+
+    const csv = (arr: string[]) => (arr || []).join(', ');
+    const parse = (s: string) => s.split(/[,]+/).map(x => x.trim()).filter(Boolean);
+
+    if (!list) return <p className="hint">팀원 불러오는 중…</p>;
+    const upd = (i: number, patch: Partial<Member>) => setList(l => l!.map((m, idx) => idx === i ? {...m, ...patch} : m));
+    const add = () => setList(l => [...l!, blankMember()]);
+    const del = (i: number) => setList(l => l!.filter((_, idx) => idx !== i));
+    const save = async () => {
+        setSaving(true); setMsg('');
+        const r = await SaveMembers(list);
+        const fresh: any = await GetMembers();
+        setSaving(false);
+        setList(fresh || list);
+        setMsg(r || '저장되었습니다 ✓');
+    };
+
+    // 팀별 그룹(현재 상태 기준). 미지정은 마지막.
+    const teams = Array.from(new Set(list.map(m => m.team.trim() || '(미지정)')));
+    teams.sort((a, b) => a === '(미지정)' ? 1 : b === '(미지정)' ? -1 : a.localeCompare(b, 'ko'));
+
+    const row = (m: Member, i: number) => (
+        <section key={i} className="stat-block ent-card">
+            <div className="ent-row">
+                <input className="ent-in ent-name" placeholder="이름" value={m.name} onChange={e => upd(i, {name: e.target.value})}/>
+                <input className="ent-in" style={{maxWidth: 120}} placeholder="팀" value={m.team} onChange={e => upd(i, {team: e.target.value})}/>
+                <input className="ent-in" style={{maxWidth: 120}} placeholder="직책" value={m.role} onChange={e => upd(i, {role: e.target.value})}/>
+                <label className="ent-active"><input type="checkbox" checked={m.active} onChange={e => upd(i, {active: e.target.checked})}/> 활성</label>
+                <button className="map-del" title="삭제" onClick={() => del(i)}>✕</button>
+            </div>
+            <div className="ent-grid">
+                <label className="ent-field">GitLab 계정<input className="ent-in" placeholder="username" value={m.gitlab_username} onChange={e => upd(i, {gitlab_username: e.target.value})}/></label>
+                <label className="ent-field">이메일<input className="ent-in" placeholder="name@company.com" value={m.email} onChange={e => upd(i, {email: e.target.value})}/></label>
+                <label className="ent-field">git 별칭 (이름/이메일, 쉼표)<input className="ent-in" placeholder="홍길동, gildong@old.com" value={csv(m.git_aliases)} onChange={e => upd(i, {git_aliases: parse(e.target.value)})}/></label>
+            </div>
+        </section>
+    );
+
+    return (
+        <div className="members-sec">
+            <h3 className="settings-sub">조직 / 팀원</h3>
+            <p className="hint">팀원을 등록하면 회의록 참석자 선택과 git 작성자 매핑(별칭 → GitLab 계정)에 쓰입니다. 팀명으로 그룹됩니다.</p>
+            {list.length === 0 && <div className="empty">등록된 팀원이 없습니다 — 아래에서 추가하세요</div>}
+            {teams.map(team => (
+                <div key={team} className="member-team">
+                    <h4 className="member-team-h">{team} <span className="count">{list.filter(m => (m.team.trim() || '(미지정)') === team).length}</span></h4>
+                    {list.map((m, i) => (m.team.trim() || '(미지정)') === team ? row(m, i) : null)}
+                </div>
+            ))}
+            <div className="ent-actions">
+                <button className="btn btn-sm" onClick={add}>+ 팀원 추가</button>
+                <span style={{flex: 1}}/>
+                {msg && <span className="hint">{msg}</span>}
+                <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '팀원 저장'}</button>
+            </div>
+        </div>
+    );
+}
+
 function SettingsView() {
     const [list, setList] = useState<Entity[] | null>(null);
     const [saving, setSaving] = useState(false);
@@ -2352,6 +2457,8 @@ function SettingsView() {
             </div>
 
             <AISettings/>
+
+            <MembersSection/>
 
             <h3 className="settings-sub">거래처 / 프로젝트</h3>
             <p className="hint">엔티티는 GitLab 그룹·Jira 키·Confluence 검색어로 활동을 모읍니다. 여러 개는 쉼표로 입력. 저장하면 사이드바·허브에 반영됩니다.</p>

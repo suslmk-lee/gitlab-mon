@@ -123,7 +123,7 @@ func (a *App) WeeklyReportUsers() []string {
 	a.mu.Lock()
 	users := a.lastUsers
 	a.mu.Unlock()
-	resolve := buildUserResolver(users, a.aliasesSnapshot())
+	resolve := buildUserResolver(users, a.effectiveAliases())
 
 	set := map[string]bool{}
 	add := func(u string) {
@@ -180,7 +180,7 @@ func (a *App) WeeklyReport(username string, offset int) WeekReport {
 	}
 	a.mu.Unlock()
 	rep.HasAIKey = hasAI
-	resolve := buildUserResolver(users, a.aliasesSnapshot())
+	resolve := buildUserResolver(users, a.effectiveAliases())
 
 	inWeek := func(t time.Time) bool { return !t.Before(start) && t.Before(end) }
 
@@ -307,7 +307,7 @@ func (a *App) SummarizeWeek(username string, offset int) string {
 
 	start, end := weekRange(offset)
 	inWeek := func(t time.Time) bool { return !t.Before(start) && t.Before(end) }
-	resolve := buildUserResolver(users, a.aliasesSnapshot())
+	resolve := buildUserResolver(users, a.effectiveAliases())
 
 	// 일자별 커밋 제목 수집 (일간 업무 내역용)
 	dayMsgs := map[string][]string{}

@@ -230,7 +230,7 @@ func buildUserResolver(users []gitlab.User, aliases map[string]string) func(name
 // aggregateCodeDaily rolls the commit cache up to per-user-per-day rows,
 // resolving git author identities to GitLab usernames where possible.
 func (a *App) aggregateCodeDaily(users []gitlab.User, since time.Time) []CodeDay {
-	resolve := buildUserResolver(users, a.aliasesSnapshot())
+	resolve := buildUserResolver(users, a.effectiveAliases())
 
 	type key struct{ user, day string }
 	agg := map[key]*CodeDay{}

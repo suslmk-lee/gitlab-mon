@@ -19,6 +19,8 @@ export function GetConfig():Promise<Record<string, any>>;
 
 export function GetEntities():Promise<Array<main.Entity>>;
 
+export function GetMembers():Promise<Array<main.Member>>;
+
 export function GetSnapshot():Promise<main.Snapshot>;
 
 export function HasFFmpeg():Promise<boolean>;
@@ -46,6 +48,8 @@ export function SaveCSV(arg1:string,arg2:string):Promise<string>;
 export function SaveConfig(arg1:string,arg2:string):Promise<string>;
 
 export function SaveEntities(arg1:Array<main.Entity>):Promise<string>;
+
+export function SaveMembers(arg1:Array<main.Member>):Promise<string>;
 
 export function SaveNote(arg1:main.Note):Promise<main.NoteResult>;
 

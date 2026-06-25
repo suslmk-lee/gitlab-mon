@@ -679,6 +679,32 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class Member {
+	    id: string;
+	    name: string;
+	    team: string;
+	    role: string;
+	    email: string;
+	    gitlab_username: string;
+	    git_aliases: string[];
+	    active: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Member(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.team = source["team"];
+	        this.role = source["role"];
+	        this.email = source["email"];
+	        this.gitlab_username = source["gitlab_username"];
+	        this.git_aliases = source["git_aliases"];
+	        this.active = source["active"];
+	    }
+	}
 	export class Note {
 	    id: number;
 	    kind: string;
