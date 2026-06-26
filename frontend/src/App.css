@@ -1179,6 +1179,21 @@ html, body, #root {
     font-size: 12px; cursor: pointer; transition: background 0.12s, color 0.12s;
 }
 .show-more:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+/* 로딩 스켈레톤 */
+.skel { position: relative; overflow: hidden; background: rgba(255, 255, 255, 0.06); }
+.skel::after {
+    content: ''; position: absolute; inset: 0; transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.09), transparent);
+    animation: skel-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+.skel-list { display: flex; flex-direction: column; gap: 8px; }
+.skel-card {
+    display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+    border: 1px solid var(--stroke); border-radius: 12px; background: var(--glass);
+}
+.skel-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.skel-lines { display: flex; flex-direction: column; gap: 9px; }
 /* Jira 목록 행: 요약이 늘어나고 담당자·시간/마감일은 고정폭 컬럼으로 정렬 */
 .jira-row .pipe-proj { flex: 1; min-width: 0; }
 .jira-row .jira-assignee { margin-left: 12px; width: 92px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

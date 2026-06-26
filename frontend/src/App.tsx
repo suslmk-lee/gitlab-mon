@@ -157,6 +157,35 @@ function Icon({name, size = 16, className}: { name: string; size?: number; class
     );
 }
 
+// ---- 로딩 스켈레톤 (placeholder shimmer) — 앱 전반 로딩 표시 통일 ----
+function Skel({w = '100%', h = 12, r = 6, style}: { w?: number | string; h?: number; r?: number; style?: React.CSSProperties }) {
+    return <span className="skel" style={{display: 'block', width: w, height: h, borderRadius: r, ...style}}/>;
+}
+// 카드형 목록 로딩(설정·기록 등). 너비는 인덱스 기반으로 변주해 자연스럽게.
+function SkelRows({rows = 5}: { rows?: number }) {
+    return (
+        <div className="skel-list">
+            {Array.from({length: rows}).map((_, i) => (
+                <div key={i} className="skel-card">
+                    <span className="skel skel-dot"/>
+                    <Skel w={`${42 + (i % 3) * 16}%`} h={13}/>
+                    <span style={{flex: 1}}/>
+                    <Skel w={64} h={13}/>
+                </div>
+            ))}
+        </div>
+    );
+}
+// 섹션 전체 로딩(헤더 + 목록).
+function SectionLoading({rows = 5}: { rows?: number }) {
+    return (
+        <div className="stats scroll">
+            <div className="board-head"><Skel w={140} h={22}/></div>
+            <SkelRows rows={rows}/>
+        </div>
+    );
+}
+
 const KIND_META: Record<Kind, { label: string; color: string }> = {
     push:    {label: 'Push',  color: 'var(--green)'},
     merge:   {label: 'Merge', color: 'var(--purple)'},
@@ -357,19 +386,29 @@ function IssueModal({issueKey, issues, onClose, onSelect}: {
                 <div className="modal-section">
                     <h4>상태 변경</h4>
                     <div className="modal-trans">
-                        {detail === null && <span className="hint">불러오는 중…</span>}
-                        {targets.map(t => (
-                            <button key={t.id}
-                                    className={`pill pill-on pill-${t.to_category === 'done' ? 'push' : t.to_category === 'indeterminate' ? 'comment' : 'mr'} ${t.to_status === issue.status ? 'pill-cur' : ''}`}
-                                    disabled={busy || t.to_status === issue.status}
-                                    onClick={() => move(t.to_status)}>
-                                {t.to_status === issue.status ? '● ' : ''}{t.to_status}
-                            </button>
-                        ))}
+                        {detail === null
+                            ? <><Skel w={72} h={28} r={999}/><Skel w={92} h={28} r={999}/><Skel w={64} h={28} r={999}/></>
+                            : targets.map(t => (
+                                <button key={t.id}
+                                        className={`pill pill-on pill-${t.to_category === 'done' ? 'push' : t.to_category === 'indeterminate' ? 'comment' : 'mr'} ${t.to_status === issue.status ? 'pill-cur' : ''}`}
+                                        disabled={busy || t.to_status === issue.status}
+                                        onClick={() => move(t.to_status)}>
+                                    {t.to_status === issue.status ? '● ' : ''}{t.to_status}
+                                </button>
+                            ))}
                         {busy && <span className="hint">변경 중…</span>}
                     </div>
                     {err && <div className="error-banner">⚠ {err}</div>}
                 </div>
+
+                {detail === null && (
+                    <div className="modal-section">
+                        <h4>설명</h4>
+                        <div className="skel-lines">
+                            <Skel h={13}/><Skel h={13}/><Skel w="86%" h={13}/><Skel w="58%" h={13}/>
+                        </div>
+                    </div>
+                )}
 
                 {detail?.description && (
                     <div className="modal-section">
@@ -1659,7 +1698,10 @@ function AuthorMappingModal({onClose, onSaved}: { onClose: () => void; onSaved: 
 
     if (!data) {
         return <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}><div className="empty">불러오는 중…</div></div>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-head"><Skel w={120} h={20}/></div>
+                <SkelRows rows={5}/>
+            </div>
         </div>;
     }
 
@@ -1794,7 +1836,7 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
             {mapping && <AuthorMappingModal onClose={() => setMapping(false)} onSaved={reloadUsers}/>}
 
             {!user && <section className="stat-block"><div className="empty">사용자를 선택하면 {offLabel} 활동을 정리합니다</div></section>}
-            {loading && <section className="stat-block"><div className="empty">불러오는 중…</div></section>}
+            {loading && <section className="stat-block"><SkelRows rows={6}/></section>}
             {rep?.error && <div className="error-banner">⚠ {rep.error}</div>}
 
             {rep && !rep.error && !loading && (
@@ -2326,7 +2368,7 @@ function RecordsView({snap}: { snap: Snapshot }) {
                 <button className="btn btn-sm" onClick={() => setEditing(blankNote())}>+ 새 기록</button>
             </div>
 
-            {!notes && <section className="stat-block"><div className="empty">불러오는 중…</div></section>}
+            {!notes && <section className="stat-block"><SkelRows rows={6}/></section>}
             {notes && list.length === 0 && <section className="stat-block"><div className="empty">기록이 없습니다 — '+ 새 기록'으로 추가하세요</div></section>}
             {list.map(n => (
                 <section key={n.id} className="stat-block note-card" onClick={() => setEditing(n)}>
@@ -2440,7 +2482,7 @@ function TeamsSection() {
     const reload = () => Promise.all([GetTeams(), GetMembers()]).then(([ts, ms]: any) => { setList(ts || []); setMembers(ms || []); });
     useEffect(() => { reload(); }, []);
 
-    if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
+    if (!list) return <SectionLoading/>;
     const openAdd = () => { setDraft({...blankTeam(), id: 'team-' + Date.now().toString(36)}); setDraftMembers(members.map(m => ({...m}))); setEditIdx(-1); };
     const openEdit = (t: Team, i: number) => { setDraft({...t}); setDraftMembers(members.map(m => ({...m}))); setEditIdx(i); };
     const close = () => { if (!busy) setEditIdx(null); };
@@ -2549,7 +2591,7 @@ function MembersSection({onMapping}: { onMapping: () => void }) {
     const csv = (arr: string[]) => (arr || []).join(', ');
     const parse = (s: string) => s.split(/[,]+/).map(x => x.trim()).filter(Boolean);
 
-    if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
+    if (!list) return <SectionLoading/>;
     const openAdd = () => { setDraft(blankMember(teams[0]?.id || '')); setEditIdx(-1); };
     const openEdit = (m: Member, i: number) => { setDraft({...m}); setEditIdx(i); };
     const close = () => { if (!busy) setEditIdx(null); };
@@ -2669,7 +2711,7 @@ function EntitiesSection() {
     const csv = (arr: string[]) => (arr || []).join(', ');
     const parse = (s: string) => s.split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
 
-    if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
+    if (!list) return <SectionLoading/>;
     const openAdd = () => { setDraft(blankEntity()); setEditIdx(-1); };
     const openEdit = (e: Entity, i: number) => { setDraft({...e}); setEditIdx(i); };
     const close = () => { if (!busy) setEditIdx(null); };
