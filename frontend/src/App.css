@@ -1194,6 +1194,8 @@ html, body, #root {
 }
 .skel-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
 .skel-lines { display: flex; flex-direction: column; gap: 9px; }
+.skel-nav { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
+.skel-nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; }
 /* Jira 목록 행: 요약이 늘어나고 담당자·시간/마감일은 고정폭 컬럼으로 정렬 */
 .jira-row .pipe-proj { flex: 1; min-width: 0; }
 .jira-row .jira-assignee { margin-left: 12px; width: 92px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -185,6 +185,46 @@ function SectionLoading({rows = 5}: { rows?: number }) {
         </div>
     );
 }
+// 앱 최초 부팅 로딩 — 실제 셸(사이드바+콘텐츠) 모양의 스켈레톤. 수집 진행률은 유지.
+function AppShellSkeleton({progress}: { progress: Progress | null }) {
+    return (
+        <div className="app">
+            <nav className="sidebar">
+                <div className="sidebar-brand"><span className="skel skel-dot"/><Skel w={120} h={17}/></div>
+                <div className="nav-scroll skel-nav">
+                    {Array.from({length: 9}).map((_, i) => (
+                        <div key={i} className="skel-nav-item">
+                            <span className="skel" style={{width: 16, height: 16, borderRadius: 5, flexShrink: 0}}/>
+                            <Skel w={`${46 + (i % 4) * 14}%`} h={12}/>
+                        </div>
+                    ))}
+                </div>
+            </nav>
+            <div className="main-area">
+                <header className="topbar">
+                    <Skel w={180} h={18}/>
+                    <span style={{flex: 1}}/>
+                    {progress
+                        ? <span className="fetched">{progress.phase} 수집 {progress.done}/{progress.total}</span>
+                        : <Skel w={90} h={14}/>}
+                </header>
+                {progress && <div className="pbar"><div className="pbar-fill" style={{width: `${progress.total ? (progress.done / progress.total) * 100 : 0}%`}}/></div>}
+                <div className="stats scroll">
+                    <div className="board-head"><Skel w={150} h={22}/></div>
+                    <div className="cards">
+                        {Array.from({length: 5}).map((_, i) => (
+                            <div key={i} className="card">
+                                <Skel w="55%" h={26} style={{margin: '2px auto 10px'}}/>
+                                <Skel w="72%" h={11} style={{margin: '0 auto'}}/>
+                            </div>
+                        ))}
+                    </div>
+                    <SkelRows rows={6}/>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 const KIND_META: Record<Kind, { label: string; color: string }> = {
     push:    {label: 'Push',  color: 'var(--green)'},
@@ -3147,19 +3187,7 @@ function App() {
         return next;
     });
 
-    if (!snap) {
-        return (
-            <div className="loading">
-                <div className="loading-box">
-                    <div>GitLab 데이터 불러오는 중…</div>
-                    {progress && <>
-                        <div className="pbar"><div className="pbar-fill" style={{width: `${(progress.done / progress.total) * 100}%`}}/></div>
-                        <div className="pbar-text">{progress.phase} 수집 {progress.done} / {progress.total}</div>
-                    </>}
-                </div>
-            </div>
-        );
-    }
+    if (!snap) return <AppShellSkeleton progress={progress}/>;
     if (snap.needs_config) return <SetupView onSaved={() => setSnap(null)}/>;
 
     return (
