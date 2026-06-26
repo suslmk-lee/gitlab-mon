@@ -581,6 +581,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
     const [board, setBoard] = useState<string | null>(null);
     const [selected, setSelected] = useState<string | null>(null);
     const [showAllOverdue, setShowAllOverdue] = useState(false);
+    const [showAllRecent, setShowAllRecent] = useState(false);
     const issues = snap.jira_issues;
     const modal = selected &&
         <IssueModal issueKey={selected} issues={issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;
@@ -662,7 +663,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                 <section className="stat-block">
                     <h3>기한 초과 <span className="count">{overdue.length}</span></h3>
                     {(showAllOverdue ? overdue : overdue.slice(0, 5)).map(i => (
-                        <div key={i.key} className="pipe" onClick={() => setSelected(i.key)}>
+                        <div key={i.key} className="pipe jira-row" onClick={() => setSelected(i.key)}>
                             <span className="jira-key">{i.key}</span>
                             <span className="pipe-proj">{i.summary}</span>
                             <span className="jira-assignee">{i.assignee || '미지정'}</span>
@@ -707,8 +708,8 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
 
             <section className="stat-block">
                 <h3>최근 업데이트 <span className="count">{recent.length}</span></h3>
-                {recent.map(i => (
-                    <div key={i.key} className="pipe" onClick={() => setSelected(i.key)}>
+                {(showAllRecent ? recent : recent.slice(0, 5)).map(i => (
+                    <div key={i.key} className="pipe jira-row" onClick={() => setSelected(i.key)}>
                         <span className={`jira-status jira-${i.status_category}`}>{i.status}</span>
                         <span className="jira-key">{i.key}</span>
                         <span className="pipe-proj">{i.summary}</span>
@@ -716,6 +717,11 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                         <span className="time">{timeAgo(i.updated)}</span>
                     </div>
                 ))}
+                {recent.length > 5 && (
+                    <button className="show-more" onClick={() => setShowAllRecent(v => !v)}>
+                        {showAllRecent ? '접기 ▲' : `모두 보기 (+${recent.length - 5}) ▼`}
+                    </button>
+                )}
             </section>
             {modal}
         </div>

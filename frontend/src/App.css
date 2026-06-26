@@ -1179,5 +1179,10 @@ html, body, #root {
     font-size: 12px; cursor: pointer; transition: background 0.12s, color 0.12s;
 }
 .show-more:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+/* Jira 목록 행: 요약이 늘어나고 담당자·시간/마감일은 고정폭 컬럼으로 정렬 */
+.jira-row .pipe-proj { flex: 1; min-width: 0; }
+.jira-row .jira-assignee { margin-left: 12px; width: 92px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jira-row .time { margin-left: 12px; width: 66px; text-align: right; white-space: nowrap; }
+.jira-row .jira-due { margin-left: 12px; width: 92px; text-align: right; white-space: nowrap; }
 .nlm-panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn.nlm-gen { border-color: var(--accent); color: var(--accent); font-weight: 700; }
