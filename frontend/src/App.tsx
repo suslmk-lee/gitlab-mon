@@ -2643,58 +2643,115 @@ function MembersSection({onMapping}: { onMapping: () => void }) {
     );
 }
 
-// ---- 거래처 / 프로젝트 ----
+const blankEntity = (): Entity => ({id: '', name: '', kind: 'project', gitlab_groups: [], jira_keys: [], confluence_query: '', aliases: [], accent: 'var(--accent)', active: true});
+
+// ---- 거래처 / 프로젝트 (리스트 + 추가/수정 모달) ----
 function EntitiesSection() {
     const [list, setList] = useState<Entity[] | null>(null);
-    const [saving, setSaving] = useState(false);
-    const [msg, setMsg] = useState('');
-    useEffect(() => { GetEntities().then((es: any) => setList(es || [])); }, []);
+    const [editIdx, setEditIdx] = useState<number | null>(null); // null=닫힘, -1=신규
+    const [draft, setDraft] = useState<Entity>(blankEntity());
+    const [busy, setBusy] = useState(false);
+    const reload = () => GetEntities().then((es: any) => setList(es || []));
+    useEffect(() => { reload(); }, []);
 
     const csv = (arr: string[]) => (arr || []).join(', ');
     const parse = (s: string) => s.split(/[,\s]+/).map(x => x.trim()).filter(Boolean);
 
     if (!list) return <div className="stats scroll"><div className="empty">불러오는 중…</div></div>;
-    const upd = (i: number, patch: Partial<Entity>) => setList(l => l!.map((e, idx) => idx === i ? {...e, ...patch} : e));
-    const add = () => setList(l => [...l!, {id: '', name: '', kind: 'project', gitlab_groups: [], jira_keys: [], confluence_query: '', aliases: [], accent: 'var(--accent)', active: true}]);
-    const del = (i: number) => setList(l => l!.filter((_, idx) => idx !== i));
-    const save = async () => {
-        setSaving(true); setMsg('');
-        const out = list.map(e => ({...e, id: (e.id || '').trim() || slug(e.name)}));
-        const r = await SaveEntities(out);
-        setSaving(false);
-        setList(out);
-        setMsg(r || '저장되었습니다 ✓');
+    const openAdd = () => { setDraft(blankEntity()); setEditIdx(-1); };
+    const openEdit = (e: Entity, i: number) => { setDraft({...e}); setEditIdx(i); };
+    const close = () => { if (!busy) setEditIdx(null); };
+    const setD = (patch: Partial<Entity>) => setDraft(d => ({...d, ...patch}));
+    const saveDraft = async () => {
+        if (!draft.name.trim()) return;
+        setBusy(true);
+        const e = {...draft, id: (draft.id || '').trim() || slug(draft.name)};
+        const next = editIdx! >= 0 ? list.map((x, i) => i === editIdx ? e : x) : [...list, e];
+        await SaveEntities(next);
+        await reload();
+        setBusy(false); setEditIdx(null);
     };
+    const delEntity = async () => {
+        if (editIdx === null || editIdx < 0) { setEditIdx(null); return; }
+        setBusy(true);
+        await SaveEntities(list.filter((_, i) => i !== editIdx));
+        await reload();
+        setBusy(false); setEditIdx(null);
+    };
+
+    const kinds: { k: string; label: string }[] = [{k: 'company', label: '거래처'}, {k: 'project', label: '프로젝트'}];
 
     return (
         <div className="stats scroll">
-            <div className="board-head"><h2>거래처 / 프로젝트</h2></div>
-            <p className="hint">엔티티는 GitLab 그룹·Jira 키·Confluence 검색어로 활동을 모읍니다. 여러 개는 쉼표로 입력. 저장하면 사이드바·허브에 반영됩니다.</p>
-            {list.map((e, i) => (
-                <section key={i} className="stat-block ent-card" style={{borderLeft: `3px solid ${e.accent || 'var(--accent)'}`}}>
-                    <div className="ent-row">
-                        <input className="ent-in ent-name" placeholder="이름" value={e.name} onChange={ev => upd(i, {name: ev.target.value})}/>
-                        <select className="jselect" value={e.kind} onChange={ev => upd(i, {kind: ev.target.value})}>
-                            <option value="project">프로젝트</option>
-                            <option value="company">거래처</option>
-                        </select>
-                        <ColorPicker value={e.accent} onChange={v => upd(i, {accent: v})}/>
-                        <label className="ent-active"><input type="checkbox" checked={e.active} onChange={ev => upd(i, {active: ev.target.checked})}/> 활성</label>
-                        <button className="map-del" title="삭제" onClick={() => del(i)}>✕</button>
-                    </div>
-                    <div className="ent-grid">
-                        <label className="ent-field">GitLab 그룹<input className="ent-in" placeholder="akashiq" value={csv(e.gitlab_groups)} onChange={ev => upd(i, {gitlab_groups: parse(ev.target.value)})}/></label>
-                        <label className="ent-field">Jira 키<input className="ent-in" placeholder="KSHQ, AK" value={csv(e.jira_keys)} onChange={ev => upd(i, {jira_keys: parse(ev.target.value)})}/></label>
-                        <label className="ent-field">Confluence 검색어<input className="ent-in" placeholder="(비우면 이름 사용)" value={e.confluence_query} onChange={ev => upd(i, {confluence_query: ev.target.value})}/></label>
-                    </div>
-                </section>
-            ))}
-            <div className="ent-actions">
-                <button className="btn btn-sm" onClick={add}>+ 엔티티 추가</button>
-                <span style={{flex: 1}}/>
-                {msg && <span className="hint">{msg}</span>}
-                <button className="refresh-btn" onClick={save} disabled={saving}>{saving ? '저장 중…' : '저장'}</button>
+            <div className="board-head">
+                <h2>거래처 / 프로젝트</h2>
+                <button className="refresh-btn" onClick={openAdd}>+ 엔티티 추가</button>
             </div>
+            <p className="hint">엔티티는 GitLab 그룹·Jira 키·Confluence 검색어로 활동을 모읍니다. 저장하면 사이드바·허브에 반영됩니다.</p>
+            {list.length === 0 && <div className="empty">등록된 엔티티가 없습니다 — ‘엔티티 추가’로 시작하세요</div>}
+            {kinds.map(g => {
+                const inGroup = list.map((e, i) => ({e, i})).filter(({e}) => (e.kind === 'company' ? 'company' : 'project') === g.k);
+                if (inGroup.length === 0) return null;
+                return (
+                    <div key={g.k} className="member-team">
+                        <h4 className="member-team-h">{g.label} <span className="count">{inGroup.length}</span></h4>
+                        <div className="reg-list">
+                            {inGroup.map(({e, i}) => (
+                                <button key={e.id || i} className="reg-card" onClick={() => openEdit(e, i)}>
+                                    <span className="reg-dot" style={{background: e.accent || 'var(--accent)'}}/>
+                                    <span className="reg-name">{e.name}</span>
+                                    {(e.gitlab_groups || []).length > 0 && <span className="reg-sub">{csv(e.gitlab_groups)}</span>}
+                                    {!e.active && <span className="reg-off">비활성</span>}
+                                    <span className="reg-edit">수정</span>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                );
+            })}
+
+            {editIdx !== null && (
+                <div className="modal-overlay" onClick={close}>
+                    <div className="modal" onClick={ev => ev.stopPropagation()}>
+                        <div className="modal-head">
+                            <h2 className="modal-title">{editIdx >= 0 ? '엔티티 수정' : '엔티티 추가'}</h2>
+                            <button className="modal-x" onClick={close}>✕</button>
+                        </div>
+                        <div className="modal-section member-form">
+                            <label className="ent-field">이름
+                                <input className="ent-in" autoFocus placeholder="예: AkashiQ" value={draft.name} onChange={e => setD({name: e.target.value})}/>
+                            </label>
+                            <div className="modal-form-row">
+                                <label className="ent-field grow">종류
+                                    <select className="jselect" value={draft.kind} onChange={e => setD({kind: e.target.value})}>
+                                        <option value="project">프로젝트</option>
+                                        <option value="company">거래처</option>
+                                    </select>
+                                </label>
+                                <label className="ent-field">색<ColorPicker value={draft.accent} onChange={v => setD({accent: v})}/></label>
+                                <label className="ent-active"><input type="checkbox" checked={draft.active} onChange={e => setD({active: e.target.checked})}/> 활성</label>
+                            </div>
+                            <label className="ent-field">GitLab 그룹 (쉼표)
+                                <input className="ent-in" placeholder="akashiq" value={csv(draft.gitlab_groups)} onChange={e => setD({gitlab_groups: parse(e.target.value)})}/>
+                            </label>
+                            <div className="modal-form-row">
+                                <label className="ent-field grow">Jira 키 (쉼표)
+                                    <input className="ent-in" placeholder="KSHQ, AK" value={csv(draft.jira_keys)} onChange={e => setD({jira_keys: parse(e.target.value)})}/>
+                                </label>
+                                <label className="ent-field grow">Confluence 검색어
+                                    <input className="ent-in" placeholder="(비우면 이름 사용)" value={draft.confluence_query} onChange={e => setD({confluence_query: e.target.value})}/>
+                                </label>
+                            </div>
+                        </div>
+                        <div className="modal-actions">
+                            {editIdx >= 0 && <button className="btn btn-danger" onClick={delEntity} disabled={busy}>삭제</button>}
+                            <span style={{flex: 1}}/>
+                            <button className="btn" onClick={close} disabled={busy}>취소</button>
+                            <button className="refresh-btn" onClick={saveDraft} disabled={busy || !draft.name.trim()}>{busy ? '저장 중…' : '저장'}</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
