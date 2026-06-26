@@ -1173,5 +1173,11 @@ html, body, #root {
 .part-x:hover { color: var(--red); }
 .part-add { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
 .part-add .ent-in { flex: 1; }
+.show-more {
+    width: 100%; margin-top: 8px; padding: 8px; border-radius: 8px;
+    border: 1px solid var(--stroke); background: transparent; color: var(--muted);
+    font-size: 12px; cursor: pointer; transition: background 0.12s, color 0.12s;
+}
+.show-more:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
 .nlm-panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn.nlm-gen { border-color: var(--accent); color: var(--accent); font-weight: 700; }

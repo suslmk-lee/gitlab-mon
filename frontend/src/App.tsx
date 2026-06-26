@@ -580,6 +580,7 @@ function JiraBoard({issues, projectKey, onBack, onSelect}: {
 function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
     const [board, setBoard] = useState<string | null>(null);
     const [selected, setSelected] = useState<string | null>(null);
+    const [showAllOverdue, setShowAllOverdue] = useState(false);
     const issues = snap.jira_issues;
     const modal = selected &&
         <IssueModal issueKey={selected} issues={issues} onClose={() => setSelected(null)} onSelect={setSelected}/>;
@@ -660,7 +661,7 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
             {overdue.length > 0 && (
                 <section className="stat-block">
                     <h3>기한 초과 <span className="count">{overdue.length}</span></h3>
-                    {overdue.map(i => (
+                    {(showAllOverdue ? overdue : overdue.slice(0, 5)).map(i => (
                         <div key={i.key} className="pipe" onClick={() => setSelected(i.key)}>
                             <span className="jira-key">{i.key}</span>
                             <span className="pipe-proj">{i.summary}</span>
@@ -668,6 +669,11 @@ function JiraView({snap, period}: { snap: Snapshot; period: Period }) {
                             <span className="jira-due">~{i.due_date}</span>
                         </div>
                     ))}
+                    {overdue.length > 5 && (
+                        <button className="show-more" onClick={() => setShowAllOverdue(v => !v)}>
+                            {showAllOverdue ? '접기 ▲' : `모두 보기 (+${overdue.length - 5}) ▼`}
+                        </button>
+                    )}
                 </section>
             )}
 
