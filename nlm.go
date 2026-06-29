@@ -18,22 +18,43 @@ import (
 //go:embed scripts/nlm_minutes.py
 var nlmMinutesScript string
 
-// pythonPath returns a usable python3 interpreter path, or "" if none found.
+// pythonPath returns a python3 interpreter, preferring one where `import notebooklm`
+// succeeds (the helper's hard dependency). A GUI-launched macOS app inherits only a
+// minimal PATH, so exec.LookPath often resolves to /usr/bin/python3 which lacks the
+// pip-installed package — so we probe candidates by absolute path (independent of PATH)
+// and pick the first that can import notebooklm; otherwise fall back to any python3.
 func pythonPath() string {
-	if p, err := exec.LookPath("python3"); err == nil {
-		return p
+	cands := []string{}
+	if p := strings.TrimSpace(os.Getenv("QH_PYTHON")); p != "" {
+		cands = append(cands, p) // 사용자 지정 우선
 	}
-	for _, p := range []string{
+	if p, err := exec.LookPath("python3"); err == nil {
+		cands = append(cands, p)
+	}
+	cands = append(cands,
 		"/opt/homebrew/bin/python3",
 		"/usr/local/bin/python3",
 		"/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+		"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+		"/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
 		"/usr/bin/python3",
-	} {
-		if _, err := os.Stat(p); err == nil {
-			return p
+	)
+	firstExisting := ""
+	for _, p := range cands {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		if firstExisting == "" {
+			firstExisting = p
+		}
+		if exec.Command(p, "-c", "import notebooklm").Run() == nil {
+			return p // notebooklm 설치된 python 우선
 		}
 	}
-	return ""
+	return firstExisting // 없으면 아무 python3 (헬퍼가 미설치 메시지 출력)
 }
 
 // HasPython reports whether a python3 interpreter is available.
