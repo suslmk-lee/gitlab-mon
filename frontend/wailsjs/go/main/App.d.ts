@@ -33,6 +33,10 @@ export function JiraDetail(arg1:string):Promise<main.JiraIssueDetail>;
 
 export function JiraMove(arg1:string,arg2:string):Promise<string>;
 
+export function KeycloakConfigured():Promise<boolean>;
+
+export function KeycloakLoginStats(arg1:number,arg2:boolean):Promise<main.KCLoginResult>;
+
 export function KosmosAIConfigured():Promise<boolean>;
 
 export function KosmosUsage(arg1:number,arg2:boolean):Promise<main.KosmosUsageResult>;

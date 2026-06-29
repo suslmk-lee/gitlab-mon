@@ -23,6 +23,11 @@ type Config struct {
 	// KosmosAI 플랫폼 통계용 (감사 로그 = superuser 토큰 필요). 디스크 미저장.
 	KosmosAIToken string `json:"-"`                       // env KOSMOSAI_TOKEN (PAT ks_ 또는 JWT)
 	KosmosAIURL   string `json:"kosmosai_url,omitempty"`  // portal-api 베이스 (비우면 기본값)
+	// Keycloak 로그인/세션 통계용 (service-account client_credentials). secret 디스크 미저장.
+	KeycloakURL          string `json:"keycloak_url,omitempty"`    // 비우면 기본값
+	KeycloakRealm        string `json:"keycloak_realm,omitempty"`  // 비우면 kosmos
+	KeycloakClientID     string `json:"keycloak_client_id,omitempty"`
+	KeycloakClientSecret string `json:"-"` // env KEYCLOAK_CLIENT_SECRET
 }
 
 const defaultURL = "https://ci.quantumcns.ai"
@@ -112,6 +117,18 @@ func Load() Config {
 	}
 	if v := os.Getenv("KOSMOSAI_URL"); v != "" {
 		cfg.KosmosAIURL = v
+	}
+	if v := os.Getenv("KEYCLOAK_URL"); v != "" {
+		cfg.KeycloakURL = v
+	}
+	if v := os.Getenv("KEYCLOAK_REALM"); v != "" {
+		cfg.KeycloakRealm = v
+	}
+	if v := os.Getenv("KEYCLOAK_CLIENT_ID"); v != "" {
+		cfg.KeycloakClientID = v
+	}
+	if v := os.Getenv("KEYCLOAK_CLIENT_SECRET"); v != "" {
+		cfg.KeycloakClientSecret = v
 	}
 
 	// AI 제공자 기본값 + 키 로드 (provider 확정 후). 키체인 계정은 "ai:<provider>".
@@ -240,6 +257,14 @@ func applyEnvFile(path string, cfg *Config) {
 			cfg.KosmosAIToken = v
 		case "KOSMOSAI_URL":
 			cfg.KosmosAIURL = v
+		case "KEYCLOAK_URL":
+			cfg.KeycloakURL = v
+		case "KEYCLOAK_REALM":
+			cfg.KeycloakRealm = v
+		case "KEYCLOAK_CLIENT_ID":
+			cfg.KeycloakClientID = v
+		case "KEYCLOAK_CLIENT_SECRET":
+			cfg.KeycloakClientSecret = v
 		}
 	}
 }

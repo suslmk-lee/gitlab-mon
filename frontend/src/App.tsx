@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured, KeycloakLoginStats, KeycloakConfigured} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -65,7 +65,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'kosmos' | 'settings';
+type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'kosmos' | 'klogin' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -77,6 +77,7 @@ const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: strin
         {tab: 'jira', label: 'Jira', icon: 'jira'},
         {tab: 'weekly', label: '주간 리포트', icon: 'calendar'},
         {tab: 'kosmos', label: 'KosmosAI 사용량', icon: 'ai'},
+        {tab: 'klogin', label: '로그인 현황', icon: 'users'},
     ]},
     {label: '기록', items: [
         {tab: 'records', label: '회의·통화', icon: 'note'},
@@ -2975,6 +2976,111 @@ function KosmosUsageView() {
     );
 }
 
+// ---- Keycloak 로그인/접속 현황 (events + 활성 세션, 저부하) ----
+interface KLogin {
+    configured: boolean; error: string; updated: string; window_days: number; total: number;
+    days: { name: string; count: number }[];
+    users: { user: string; product: string; count: number }[];
+    products: { name: string; count: number }[];
+    sessions: { product: string; client_id: string; active: number }[];
+    active_total: number; truncated: boolean;
+}
+function KLoginView() {
+    const [days, setDays] = useState(30);
+    const [data, setData] = useState<KLogin | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [members, setMembers] = useState<Member[]>([]);
+    const [teams, setTeams] = useState<Team[]>([]);
+
+    const load = (d: number, force: boolean) => {
+        setLoading(true);
+        KeycloakLoginStats(d, force).then((r: any) => { setData(r); setLoading(false); }).catch((e: any) => { setData({configured: true, error: String(e?.message || e)} as any); setLoading(false); });
+    };
+    useEffect(() => { load(days, false); GetMembers().then((m: any) => setMembers(m || [])); GetTeams().then((t: any) => setTeams(t || [])); }, []);
+    const pick = (d: number) => { setDays(d); load(d, false); };
+
+    const memberByEmail = (e: string) => members.find(m => m.email && m.email.toLowerCase() === (e || '').toLowerCase());
+    const label = (user: string) => { const m = memberByEmail(user); return m ? m.name : user; };
+    const teamOf = (user: string) => { const m = memberByEmail(user); return m ? (teamNameOf(teams, m.team_id) || '') : ''; };
+
+    if (loading && !data) return <SectionLoading rows={6}/>;
+    if (data && !data.configured) return (
+        <div className="stats scroll"><div className="board-head"><h2>로그인 현황</h2></div>
+            <div className="empty">{data.error || 'KEYCLOAK_CLIENT_ID/SECRET가 설정되지 않았습니다 — env.local에 추가 후 재시작하세요.'}</div>
+        </div>
+    );
+    const d = data!;
+    const dayMax = Math.max(1, ...(d.days || []).map(x => x.count));
+    const userMax = Math.max(1, ...(d.users || []).map(u => u.count));
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>로그인 현황</h2>
+                <span className="poc-sub">Keycloak · 최근 {d.window_days}일</span>
+                <span style={{flex: 1}}/>
+                <select className="jselect" value={days} onChange={e => pick(Number(e.target.value))}>
+                    <option value={7}>7일</option>
+                    <option value={30}>30일</option>
+                    <option value={90}>90일</option>
+                </select>
+                <button className="refresh-btn" onClick={() => load(days, true)} disabled={loading}>{loading ? '…' : '↻ 새로고침'}</button>
+            </div>
+            {d.error && <div className="error-banner">⚠ {d.error}</div>}
+            {d.truncated && <div className="warn-banner">⚠ 데이터가 많아 일부만 집계되었습니다.</div>}
+
+            <div className="cards">
+                <div className="card"><div className="card-v">{comma(d.total)}</div><div className="card-l">총 로그인 ({d.window_days}일)</div></div>
+                <div className="card"><div className="card-v">{comma((d.users || []).length)}</div><div className="card-l">로그인 사용자</div></div>
+                <div className="card"><div className="card-v">{comma(d.active_total)}</div><div className="card-l">현재 활성 세션</div></div>
+                <div className="card"><div className="card-v">{comma((d.products || []).length)}</div><div className="card-l">제품</div></div>
+            </div>
+
+            {(d.days || []).length > 0 && (
+                <section className="stat-block">
+                    <h3>일별 로그인</h3>
+                    <div className="kos-days">
+                        {d.days.map(x => (
+                            <div key={x.name} className="kos-day" title={`${x.name} · ${comma(x.count)}`}>
+                                <span className="kos-day-c">{x.count}</span>
+                                <div className="kos-bar" style={{height: `${4 + Math.round((x.count / dayMax) * 120)}px`}}/>
+                                <span className="kos-day-l">{x.name.slice(5)}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            <div className="stat-cols">
+                <section className="stat-block">
+                    <h3>사용자별 로그인 <span className="count">{(d.users || []).length}</span></h3>
+                    {(d.users || []).length === 0 && <div className="empty">로그인 이벤트 없음 (보존기간 상향 후 누적됩니다)</div>}
+                    {(d.users || []).slice(0, 20).map(u => (
+                        <div key={u.user} className="lb-row">
+                            <span className="lb-name">{label(u.user)}{teamOf(u.user) ? <span className="lb-sub"> · {teamOf(u.user)}</span> : (u.product ? <span className="lb-sub"> · {u.product}</span> : '')}</span>
+                            <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
+                            <span className="lb-score">{comma(u.count)}</span>
+                        </div>
+                    ))}
+                </section>
+                <section className="stat-block">
+                    <h3>제품별 로그인</h3>
+                    {(d.products || []).length === 0 && <div className="empty">없음</div>}
+                    {(d.products || []).map(p => (
+                        <div key={p.name} className="lb-row"><span className="lb-name">{p.name}</span><span className="lb-score">{comma(p.count)}</span></div>
+                    ))}
+                    <h3 style={{marginTop: 14}}>현재 활성 세션 <span className="count">{comma(d.active_total)}</span></h3>
+                    {(d.sessions || []).length === 0 && <div className="empty">없음</div>}
+                    {(d.sessions || []).map(s => (
+                        <div key={s.client_id} className="lb-row"><span className="lb-name">{s.product}{s.product !== s.client_id && <span className="lb-sub"> · {s.client_id}</span>}</span><span className="lb-score">{comma(s.active)}</span></div>
+                    ))}
+                </section>
+            </div>
+            {d.updated && <p className="hint">업데이트: {timeAgo(d.updated)} · 로그인 이벤트는 Keycloak 보존기간 내 데이터만 집계됩니다.</p>}
+        </div>
+    );
+}
+
 type SettingsSection = 'ai' | 'teams' | 'members' | 'entities';
 
 function SettingsView() {
@@ -3405,7 +3511,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'kosmos' ? <KosmosUsageView/> : tab === 'settings' ? <SettingsView/> : (
+                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'kosmos' ? <KosmosUsageView/> : tab === 'klogin' ? <KLoginView/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">

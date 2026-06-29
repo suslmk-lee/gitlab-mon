@@ -62,6 +62,14 @@ export function JiraMove(arg1, arg2) {
   return window['go']['main']['App']['JiraMove'](arg1, arg2);
 }
 
+export function KeycloakConfigured() {
+  return window['go']['main']['App']['KeycloakConfigured']();
+}
+
+export function KeycloakLoginStats(arg1, arg2) {
+  return window['go']['main']['App']['KeycloakLoginStats'](arg1, arg2);
+}
+
 export function KosmosAIConfigured() {
   return window['go']['main']['App']['KosmosAIConfigured']();
 }
