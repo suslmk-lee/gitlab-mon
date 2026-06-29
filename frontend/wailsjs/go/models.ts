@@ -695,13 +695,17 @@ export namespace main {
 	        this.active = source["active"];
 	    }
 	}
-	export class KCUserCount {
+	export class KCUserStat {
 	    user: string;
 	    product: string;
 	    count: number;
+	    failed: number;
+	    active_days: number;
+	    ips: number;
+	    last_login: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new KCUserCount(source);
+	        return new KCUserStat(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -709,6 +713,10 @@ export namespace main {
 	        this.user = source["user"];
 	        this.product = source["product"];
 	        this.count = source["count"];
+	        this.failed = source["failed"];
+	        this.active_days = source["active_days"];
+	        this.ips = source["ips"];
+	        this.last_login = source["last_login"];
 	    }
 	}
 	export class KCNameCount {
@@ -731,11 +739,16 @@ export namespace main {
 	    updated: string;
 	    window_days: number;
 	    total: number;
+	    failed_total: number;
 	    days: KCNameCount[];
-	    users: KCUserCount[];
+	    hours: number[];
+	    weekdays: number[];
+	    users: KCUserStat[];
 	    products: KCNameCount[];
 	    sessions: KCSessionStat[];
 	    active_total: number;
+	    session_avg_min: number;
+	    session_samples: number;
 	    truncated: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -749,11 +762,16 @@ export namespace main {
 	        this.updated = source["updated"];
 	        this.window_days = source["window_days"];
 	        this.total = source["total"];
+	        this.failed_total = source["failed_total"];
 	        this.days = this.convertValues(source["days"], KCNameCount);
-	        this.users = this.convertValues(source["users"], KCUserCount);
+	        this.hours = source["hours"];
+	        this.weekdays = source["weekdays"];
+	        this.users = this.convertValues(source["users"], KCUserStat);
 	        this.products = this.convertValues(source["products"], KCNameCount);
 	        this.sessions = this.convertValues(source["sessions"], KCSessionStat);
 	        this.active_total = source["active_total"];
+	        this.session_avg_min = source["session_avg_min"];
+	        this.session_samples = source["session_samples"];
 	        this.truncated = source["truncated"];
 	    }
 	

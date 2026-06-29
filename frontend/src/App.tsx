@@ -2978,13 +2978,16 @@ function KosmosUsageView() {
 
 // ---- Keycloak 로그인/접속 현황 (events + 활성 세션, 저부하) ----
 interface KLogin {
-    configured: boolean; error: string; updated: string; window_days: number; total: number;
+    configured: boolean; error: string; updated: string; window_days: number; total: number; failed_total: number;
     days: { name: string; count: number }[];
-    users: { user: string; product: string; count: number }[];
+    hours: number[]; weekdays: number[];
+    users: { user: string; product: string; count: number; failed: number; active_days: number; ips: number; last_login: string }[];
     products: { name: string; count: number }[];
     sessions: { product: string; client_id: string; active: number }[];
-    active_total: number; truncated: boolean;
+    active_total: number; session_avg_min: number; session_samples: number; truncated: boolean;
 }
+const fmtMin = (m: number) => m <= 0 ? '—' : (m >= 60 ? `${(m / 60).toFixed(1)}시간` : `${Math.round(m)}분`);
+const WD = ['일', '월', '화', '수', '목', '금', '토'];
 function KLoginView() {
     const [days, setDays] = useState(30);
     const [data, setData] = useState<KLogin | null>(null);
@@ -3012,6 +3015,8 @@ function KLoginView() {
     const d = data!;
     const dayMax = Math.max(1, ...(d.days || []).map(x => x.count));
     const userMax = Math.max(1, ...(d.users || []).map(u => u.count));
+    const hourMax = Math.max(1, ...(d.hours || []));
+    const wdMax = Math.max(1, ...(d.weekdays || []));
 
     return (
         <div className="stats scroll">
@@ -3032,8 +3037,9 @@ function KLoginView() {
             <div className="cards">
                 <div className="card"><div className="card-v">{comma(d.total)}</div><div className="card-l">총 로그인 ({d.window_days}일)</div></div>
                 <div className="card"><div className="card-v">{comma((d.users || []).length)}</div><div className="card-l">로그인 사용자</div></div>
+                <div className="card"><div className="card-v" style={{WebkitTextFillColor: (d.failed_total || 0) > 0 ? 'var(--red)' : undefined}}>{comma(d.failed_total || 0)}</div><div className="card-l">로그인 실패</div></div>
                 <div className="card"><div className="card-v">{comma(d.active_total)}</div><div className="card-l">현재 활성 세션</div></div>
-                <div className="card"><div className="card-v">{comma((d.products || []).length)}</div><div className="card-l">제품</div></div>
+                <div className="card"><div className="card-v" style={{fontSize: 22}}>{fmtMin(d.session_avg_min || 0)}</div><div className="card-l">평균 세션{d.session_samples ? ` (${d.session_samples})` : ''}</div></div>
             </div>
 
             {(d.days || []).length > 0 && (
@@ -3053,30 +3059,60 @@ function KLoginView() {
 
             <div className="stat-cols">
                 <section className="stat-block">
-                    <h3>사용자별 로그인 <span className="count">{(d.users || []).length}</span></h3>
-                    {(d.users || []).length === 0 && <div className="empty">로그인 이벤트 없음 (보존기간 상향 후 누적됩니다)</div>}
-                    {(d.users || []).slice(0, 20).map(u => (
-                        <div key={u.user} className="lb-row">
-                            <span className="lb-name">{label(u.user)}{teamOf(u.user) ? <span className="lb-sub"> · {teamOf(u.user)}</span> : (u.product ? <span className="lb-sub"> · {u.product}</span> : '')}</span>
-                            <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
-                            <span className="lb-score">{comma(u.count)}</span>
+                    <h3>시간대별 (KST)</h3>
+                    <div className="kos-days">
+                        {(d.hours || []).map((c, h) => (
+                            <div key={h} className="kos-day" title={`${h}시 · ${comma(c)}`}>
+                                <span className="kos-day-c">{c || ''}</span>
+                                <div className="kos-bar" style={{height: `${3 + Math.round((c / hourMax) * 96)}px`, background: 'var(--purple)'}}/>
+                                <span className="kos-day-l">{h}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+                <section className="stat-block">
+                    <h3>요일별</h3>
+                    {(d.weekdays || []).map((c, i) => (
+                        <div key={i} className="lb-row">
+                            <span className="lb-name" style={{minWidth: 28}}>{WD[i]}</span>
+                            <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(c / wdMax) * 100}%`}}/></div>
+                            <span className="lb-score">{comma(c)}</span>
                         </div>
                     ))}
                 </section>
+            </div>
+
+            <section className="stat-block">
+                <h3>사용자별 로그인 <span className="count">{(d.users || []).length}</span></h3>
+                {(d.users || []).length === 0 && <div className="empty">로그인 이벤트 없음 (보존기간 상향 후 누적됩니다)</div>}
+                {(d.users || []).slice(0, 30).map(u => (
+                    <div key={u.user} className="lb-row" title={u.last_login ? `마지막 로그인 ${timeAgo(u.last_login)}` : ''}>
+                        <span className="lb-name">{label(u.user)}
+                            <span className="lb-sub"> · {teamOf(u.user) || u.product} · {u.active_days}일 · IP {u.ips}{u.failed > 0 ? ` · 실패 ${u.failed}` : ''}</span>
+                        </span>
+                        <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
+                        <span className="lb-score">{comma(u.count)}</span>
+                    </div>
+                ))}
+            </section>
+
+            <div className="stat-cols">
                 <section className="stat-block">
                     <h3>제품별 로그인</h3>
                     {(d.products || []).length === 0 && <div className="empty">없음</div>}
                     {(d.products || []).map(p => (
                         <div key={p.name} className="lb-row"><span className="lb-name">{p.name}</span><span className="lb-score">{comma(p.count)}</span></div>
                     ))}
-                    <h3 style={{marginTop: 14}}>현재 활성 세션 <span className="count">{comma(d.active_total)}</span></h3>
+                </section>
+                <section className="stat-block">
+                    <h3>현재 활성 세션 <span className="count">{comma(d.active_total)}</span></h3>
                     {(d.sessions || []).length === 0 && <div className="empty">없음</div>}
                     {(d.sessions || []).map(s => (
                         <div key={s.client_id} className="lb-row"><span className="lb-name">{s.product}{s.product !== s.client_id && <span className="lb-sub"> · {s.client_id}</span>}</span><span className="lb-score">{comma(s.active)}</span></div>
                     ))}
                 </section>
             </div>
-            {d.updated && <p className="hint">업데이트: {timeAgo(d.updated)} · 로그인 이벤트는 Keycloak 보존기간 내 데이터만 집계됩니다.</p>}
+            {d.updated && <p className="hint">업데이트: {timeAgo(d.updated)} · 로그인 이벤트는 Keycloak 보존기간 내 데이터만 집계됩니다. 평균 세션은 명시적 로그아웃이 있는 세션 기준입니다.</p>}
         </div>
     );
 }

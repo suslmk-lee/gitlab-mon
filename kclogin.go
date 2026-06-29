@@ -43,10 +43,14 @@ type KCNameCount struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
-type KCUserCount struct {
-	User    string `json:"user"`    // username(이메일 등)
-	Product string `json:"product"` // 주 사용 제품(최다 clientId)
-	Count   int    `json:"count"`
+type KCUserStat struct {
+	User       string `json:"user"`        // username(이메일 등)
+	Product    string `json:"product"`     // 주 사용 제품(최다 clientId)
+	Count      int    `json:"count"`       // 로그인 수
+	Failed     int    `json:"failed"`      // 로그인 실패 수
+	ActiveDays int    `json:"active_days"` // 로그인한 고유 일수
+	IPs        int    `json:"ips"`         // 고유 IP 수
+	LastLogin  string `json:"last_login"`  // 마지막 로그인 (RFC3339)
 }
 type KCSessionStat struct {
 	Product  string `json:"product"`
@@ -56,17 +60,22 @@ type KCSessionStat struct {
 
 // KCLoginResult is everything the 로그인/접속 현황 화면 needs.
 type KCLoginResult struct {
-	Configured bool            `json:"configured"`
-	Error      string          `json:"error"`
-	Updated    string          `json:"updated"`
-	WindowDays int             `json:"window_days"`
-	Total      int             `json:"total"`       // 윈도우 내 총 로그인 수
-	Days       []KCNameCount   `json:"days"`        // 날짜 → 로그인 수
-	Users      []KCUserCount   `json:"users"`       // 사용자별 로그인 수(내림차순)
-	Products   []KCNameCount   `json:"products"`    // 제품(clientId)별 로그인 수
-	Sessions   []KCSessionStat `json:"sessions"`    // 현재 활성 세션(클라이언트별)
-	ActiveTotal int            `json:"active_total"` // 현재 활성 세션 합계
-	Truncated  bool            `json:"truncated"`
+	Configured     bool            `json:"configured"`
+	Error          string          `json:"error"`
+	Updated        string          `json:"updated"`
+	WindowDays     int             `json:"window_days"`
+	Total          int             `json:"total"`        // 윈도우 내 총 로그인 수
+	FailedTotal    int             `json:"failed_total"` // 로그인 실패 수
+	Days           []KCNameCount   `json:"days"`         // 날짜 → 로그인 수
+	Hours          []int           `json:"hours"`        // 24개: 시간대(KST)별 로그인
+	Weekdays       []int           `json:"weekdays"`     // 7개: 요일(일~토)별 로그인
+	Users          []KCUserStat    `json:"users"`        // 사용자별(내림차순)
+	Products       []KCNameCount   `json:"products"`     // 제품(clientId)별 로그인 수
+	Sessions       []KCSessionStat `json:"sessions"`     // 현재 활성 세션(클라이언트별)
+	ActiveTotal    int             `json:"active_total"` // 현재 활성 세션 합계
+	SessionAvgMin  float64         `json:"session_avg_min"` // 완료 세션 평균(분, LOGIN↔LOGOUT)
+	SessionSamples int             `json:"session_samples"` // 페어링된 세션 수
+	Truncated      bool            `json:"truncated"`
 }
 
 func (a *App) kcBase() (string, string) {
@@ -187,14 +196,75 @@ func (a *App) kcGET(ctx context.Context, path string, q url.Values) ([]byte, int
 }
 
 type kcEvent struct {
-	Time     int64             `json:"time"`
-	Type     string            `json:"type"`
-	ClientID string            `json:"clientId"`
-	UserID   string            `json:"userId"`
-	Details  map[string]string `json:"details"`
+	Time      int64             `json:"time"`
+	Type      string            `json:"type"`
+	ClientID  string            `json:"clientId"`
+	UserID    string            `json:"userId"`
+	SessionID string            `json:"sessionId"`
+	IPAddress string            `json:"ipAddress"`
+	Details   map[string]string `json:"details"`
 }
 
-// KeycloakLoginStats aggregates LOGIN events over the last `days` + current sessions.
+// kcEventUser resolves the display identity for an event (details.username → userId).
+func kcEventUser(e kcEvent) string {
+	if e.Details != nil {
+		if u := e.Details["username"]; u != "" {
+			return u
+		}
+	}
+	if e.UserID != "" {
+		return e.UserID
+	}
+	return "(미상)"
+}
+
+// kcFetchEvents pages all events of a type since dateFrom (YYYY-MM-DD).
+func (a *App) kcFetchEvents(ctx context.Context, realm, etype, dateFrom string) ([]kcEvent, bool, error) {
+	var all []kcEvent
+	truncated := false
+	for pageNo := 0; pageNo < kcMaxPages; pageNo++ {
+		q := url.Values{}
+		q.Set("type", etype)
+		q.Set("dateFrom", dateFrom)
+		q.Set("max", fmt.Sprint(kcEventsMax))
+		q.Set("first", fmt.Sprint(pageNo*kcEventsMax))
+		body, status, err := a.kcGET(ctx, "/admin/realms/"+realm+"/events", q)
+		if err != nil {
+			return nil, false, err
+		}
+		if status == http.StatusForbidden {
+			return nil, false, fmt.Errorf("권한 없음 — 서비스계정에 view-events role이 필요합니다")
+		}
+		if status != http.StatusOK {
+			return nil, false, fmt.Errorf("이벤트 조회 실패 (HTTP %d)", status)
+		}
+		var evs []kcEvent
+		if err := json.Unmarshal(body, &evs); err != nil {
+			return nil, false, fmt.Errorf("이벤트 파싱 실패: %w", err)
+		}
+		all = append(all, evs...)
+		if len(evs) < kcEventsMax {
+			break
+		}
+		if pageNo == kcMaxPages-1 {
+			truncated = true
+		}
+	}
+	return all, truncated, nil
+}
+
+type kcUserAgg struct {
+	count   int
+	failed  int
+	product map[string]int
+	days    map[string]bool
+	ips     map[string]bool
+	last    int64
+}
+
+// KeycloakLoginStats aggregates LOGIN/LOGIN_ERROR/LOGOUT events over the last `days`
+// plus current active sessions. Adds time-of-day/weekday distribution, per-user
+// active-days/IPs/last-login, failed logins, and completed-session avg duration.
 func (a *App) KeycloakLoginStats(days int, force bool) KCLoginResult {
 	if !a.KeycloakConfigured() {
 		return KCLoginResult{Configured: false, Error: "KEYCLOAK_CLIENT_ID/SECRET 미설정 — env.local에 추가 후 재시작하세요"}
@@ -214,68 +284,90 @@ func (a *App) KeycloakLoginStats(days int, force bool) KCLoginResult {
 	if base == nil {
 		base = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(base, 60*time.Second)
+	ctx, cancel := context.WithTimeout(base, 90*time.Second)
 	defer cancel()
 	_, realm := a.kcBase()
 
-	res := KCLoginResult{Configured: true, WindowDays: days}
+	loc, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		loc = time.FixedZone("KST", 9*3600)
+	}
+
+	res := KCLoginResult{Configured: true, WindowDays: days, Hours: make([]int, 24), Weekdays: make([]int, 7)}
 	byDay, byProduct := map[string]int{}, map[string]int{}
-	userCount := map[string]int{}
-	userProduct := map[string]map[string]int{} // user → product → n
+	users := map[string]*kcUserAgg{}
+	loginStart := map[string]int64{} // sessionId → 최초 LOGIN time
+	getu := func(u string) *kcUserAgg {
+		if users[u] == nil {
+			users[u] = &kcUserAgg{product: map[string]int{}, days: map[string]bool{}, ips: map[string]bool{}}
+		}
+		return users[u]
+	}
 
 	dateFrom := time.Now().UTC().AddDate(0, 0, -days).Format("2006-01-02")
-	for pageNo := 0; pageNo < kcMaxPages; pageNo++ {
-		q := url.Values{}
-		q.Set("type", "LOGIN")
-		q.Set("dateFrom", dateFrom)
-		q.Set("max", fmt.Sprint(kcEventsMax))
-		q.Set("first", fmt.Sprint(pageNo*kcEventsMax))
-		body, status, err := a.kcGET(ctx, "/admin/realms/"+realm+"/events", q)
-		if err != nil {
-			return KCLoginResult{Configured: true, Error: err.Error()}
+
+	logins, trunc, err := a.kcFetchEvents(ctx, realm, "LOGIN", dateFrom)
+	if err != nil {
+		return KCLoginResult{Configured: true, Error: err.Error()}
+	}
+	res.Truncated = trunc
+	for _, e := range logins {
+		user := kcEventUser(e)
+		t := time.UnixMilli(e.Time)
+		date := t.UTC().Format("2006-01-02")
+		kt := t.In(loc)
+		prod := kcProduct(e.ClientID)
+		res.Total++
+		byDay[date]++
+		byProduct[prod]++
+		res.Hours[kt.Hour()]++
+		res.Weekdays[int(kt.Weekday())]++
+		u := getu(user)
+		u.count++
+		u.product[prod]++
+		u.days[date] = true
+		if e.IPAddress != "" {
+			u.ips[e.IPAddress] = true
 		}
-		if status == http.StatusForbidden {
-			return KCLoginResult{Configured: true, Error: "권한 없음 — 서비스계정에 view-events role이 필요합니다"}
+		if e.Time > u.last {
+			u.last = e.Time
 		}
-		if status != http.StatusOK {
-			return KCLoginResult{Configured: true, Error: fmt.Sprintf("이벤트 조회 실패 (HTTP %d)", status)}
-		}
-		var evs []kcEvent
-		if err := json.Unmarshal(body, &evs); err != nil {
-			return KCLoginResult{Configured: true, Error: "이벤트 파싱 실패: " + err.Error()}
-		}
-		for _, e := range evs {
-			user := ""
-			if e.Details != nil {
-				user = e.Details["username"]
+		if e.SessionID != "" {
+			if _, ok := loginStart[e.SessionID]; !ok {
+				loginStart[e.SessionID] = e.Time
 			}
-			if user == "" {
-				user = e.UserID
-			}
-			if user == "" {
-				user = "(미상)"
-			}
-			date := time.UnixMilli(e.Time).UTC().Format("2006-01-02")
-			prod := kcProduct(e.ClientID)
-			res.Total++
-			byDay[date]++
-			byProduct[prod]++
-			userCount[user]++
-			if userProduct[user] == nil {
-				userProduct[user] = map[string]int{}
-			}
-			userProduct[user][prod]++
 		}
-		if len(evs) < kcEventsMax {
-			break
+	}
+
+	// 로그인 실패 (LOGIN_ERROR)
+	if errs, _, e2 := a.kcFetchEvents(ctx, realm, "LOGIN_ERROR", dateFrom); e2 == nil {
+		for _, e := range errs {
+			res.FailedTotal++
+			getu(kcEventUser(e)).failed++
 		}
-		if pageNo == kcMaxPages-1 {
-			res.Truncated = true
+	}
+
+	// 세션 지속시간 — LOGOUT을 sessionId로 LOGIN과 페어링 (명시적 로그아웃만)
+	if logouts, _, e2 := a.kcFetchEvents(ctx, realm, "LOGOUT", dateFrom); e2 == nil {
+		var totalMs int64
+		n := 0
+		for _, e := range logouts {
+			if e.SessionID == "" {
+				continue
+			}
+			if st, ok := loginStart[e.SessionID]; ok && e.Time > st {
+				totalMs += e.Time - st
+				n++
+			}
+		}
+		if n > 0 {
+			res.SessionAvgMin = float64(totalMs) / float64(n) / 60000.0
+			res.SessionSamples = n
 		}
 	}
 
 	// 현재 활성 세션(클라이언트별)
-	if body, status, err := a.kcGET(ctx, "/admin/realms/"+realm+"/client-session-stats", nil); err == nil && status == http.StatusOK {
+	if body, status, e2 := a.kcGET(ctx, "/admin/realms/"+realm+"/client-session-stats", nil); e2 == nil && status == http.StatusOK {
 		var stats []struct {
 			ClientID string `json:"clientId"`
 			Active   string `json:"active"`
@@ -296,9 +388,16 @@ func (a *App) KeycloakLoginStats(days int, force bool) KCLoginResult {
 
 	res.Days = kcSortByName(byDay)
 	res.Products = kcSortByCount(byProduct)
-	res.Users = make([]KCUserCount, 0, len(userCount))
-	for u, n := range userCount {
-		res.Users = append(res.Users, KCUserCount{User: u, Product: kcTopKey(userProduct[u]), Count: n})
+	res.Users = make([]KCUserStat, 0, len(users))
+	for u, s := range users {
+		last := ""
+		if s.last > 0 {
+			last = time.UnixMilli(s.last).Format(time.RFC3339)
+		}
+		res.Users = append(res.Users, KCUserStat{
+			User: u, Product: kcTopKey(s.product), Count: s.count, Failed: s.failed,
+			ActiveDays: len(s.days), IPs: len(s.ips), LastLogin: last,
+		})
 	}
 	sort.Slice(res.Users, func(i, j int) bool {
 		if res.Users[i].Count != res.Users[j].Count {
