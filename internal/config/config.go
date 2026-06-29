@@ -20,6 +20,9 @@ type Config struct {
 	AIModel    string `json:"ai_model,omitempty"`    // 비우면 제공자 기본 모델
 	AIBaseURL  string `json:"ai_base_url,omitempty"` // custom(OpenAI 호환) 베이스 URL
 	AIKey      string `json:"-"`                     // 선택된 제공자의 API 키 (keychain)
+	// KosmosAI 플랫폼 통계용 (감사 로그 = superuser 토큰 필요). 디스크 미저장.
+	KosmosAIToken string `json:"-"`                       // env KOSMOSAI_TOKEN (PAT ks_ 또는 JWT)
+	KosmosAIURL   string `json:"kosmosai_url,omitempty"`  // portal-api 베이스 (비우면 기본값)
 }
 
 const defaultURL = "https://ci.quantumcns.ai"
@@ -103,6 +106,12 @@ func Load() Config {
 	}
 	if v := os.Getenv("AI_API_KEY"); v != "" {
 		cfg.AIKey = v
+	}
+	if v := os.Getenv("KOSMOSAI_TOKEN"); v != "" {
+		cfg.KosmosAIToken = v
+	}
+	if v := os.Getenv("KOSMOSAI_URL"); v != "" {
+		cfg.KosmosAIURL = v
 	}
 
 	// AI 제공자 기본값 + 키 로드 (provider 확정 후). 키체인 계정은 "ai:<provider>".
@@ -227,6 +236,10 @@ func applyEnvFile(path string, cfg *Config) {
 			cfg.JiraToken = v
 		case "ANTHROPIC_API_KEY":
 			cfg.AnthropicKey = v
+		case "KOSMOSAI_TOKEN":
+			cfg.KosmosAIToken = v
+		case "KOSMOSAI_URL":
+			cfg.KosmosAIURL = v
 		}
 	}
 }
