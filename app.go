@@ -111,6 +111,10 @@ type App struct {
 	entities            []Entity // 거래처/프로젝트 레지스트리 (entities.json)
 	teams               []Team   // 팀 레지스트리 (teams.json)
 	members             []Member // 조직/팀원 레지스트리 (members.json)
+	kosmosJWTVal        string             // KosmosAI: PAT→JWT 교환 캐시
+	kosmosJWTExp        time.Time          // 교환 JWT 만료
+	kosmosCache         *KosmosUsageResult // 사용량 집계 캐시(온디맨드)
+	kosmosCacheAt       time.Time
 	db                  *sql.DB  // 로컬 기록 저장소 (회의/통화 노트)
 	cycle               int      // poll cycle counter
 	lastSig             uint64   // signature of the last published snapshot

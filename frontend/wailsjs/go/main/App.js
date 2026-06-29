@@ -62,6 +62,14 @@ export function JiraMove(arg1, arg2) {
   return window['go']['main']['App']['JiraMove'](arg1, arg2);
 }
 
+export function KosmosAIConfigured() {
+  return window['go']['main']['App']['KosmosAIConfigured']();
+}
+
+export function KosmosUsage(arg1, arg2) {
+  return window['go']['main']['App']['KosmosUsage'](arg1, arg2);
+}
+
 export function ListNotes(arg1) {
   return window['go']['main']['App']['ListNotes'](arg1);
 }

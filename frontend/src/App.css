@@ -1196,6 +1196,12 @@ html, body, #root {
 .skel-lines { display: flex; flex-direction: column; gap: 9px; }
 .skel-nav { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; }
 .skel-nav-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; }
+.lb-sub { color: var(--muted); font-size: 11px; }
+.kos-days { display: flex; align-items: flex-end; gap: 5px; overflow-x: auto; padding: 8px 2px 4px; }
+.kos-day { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 24px; }
+.kos-bar { width: 16px; min-height: 3px; background: var(--accent); border-radius: 4px 4px 0 0; }
+.kos-day-c { font-size: 10px; color: var(--muted); }
+.kos-day-l { font-size: 9px; color: var(--muted); white-space: nowrap; }
 /* Jira 목록 행: 요약이 늘어나고 담당자·시간/마감일은 고정폭 컬럼으로 정렬 */
 .jira-row .pipe-proj { flex: 1; min-width: 0; }
 .jira-row .jira-assignee { margin-left: 12px; width: 92px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

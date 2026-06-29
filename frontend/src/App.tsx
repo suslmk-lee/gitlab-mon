@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -65,7 +65,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'settings';
+type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'kosmos' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -76,6 +76,7 @@ const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: strin
     {label: '업무', items: [
         {tab: 'jira', label: 'Jira', icon: 'jira'},
         {tab: 'weekly', label: '주간 리포트', icon: 'calendar'},
+        {tab: 'kosmos', label: 'KosmosAI 사용량', icon: 'ai'},
     ]},
     {label: '기록', items: [
         {tab: 'records', label: '회의·통화', icon: 'note'},
@@ -2850,6 +2851,130 @@ function EntitiesSection() {
     );
 }
 
+// ---- KosmosAI 사용량(활동) 통계 — portal-api 감사 로그 집계 (온디맨드·저부하) ----
+interface KUsage {
+    configured: boolean; error: string; updated: string; window_days: number; total: number;
+    days: { name: string; count: number }[];
+    users: { email: string; count: number }[];
+    services: { name: string; count: number }[];
+    actions: { name: string; count: number }[];
+    user_days: Record<string, Record<string, number>>;
+    truncated: boolean;
+}
+function KosmosUsageView() {
+    const [days, setDays] = useState(30);
+    const [data, setData] = useState<KUsage | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [members, setMembers] = useState<Member[]>([]);
+    const [teams, setTeams] = useState<Team[]>([]);
+
+    const load = (d: number, force: boolean) => {
+        setLoading(true);
+        KosmosUsage(d, force).then((r: any) => { setData(r); setLoading(false); }).catch((e: any) => { setData({configured: true, error: String(e?.message || e)} as any); setLoading(false); });
+    };
+    useEffect(() => { load(days, false); GetMembers().then((m: any) => setMembers(m || [])); GetTeams().then((t: any) => setTeams(t || [])); }, []);
+    const pick = (d: number) => { setDays(d); load(d, false); };
+
+    const memberByEmail = (e: string) => members.find(m => m.email && m.email.toLowerCase() === e.toLowerCase());
+    const label = (email: string) => { const m = memberByEmail(email); return m ? m.name : email; };
+    const teamOf = (email: string) => { const m = memberByEmail(email); return m ? (teamNameOf(teams, m.team_id) || '') : ''; };
+
+    if (loading && !data) return <SectionLoading rows={6}/>;
+    if (data && !data.configured) return (
+        <div className="stats scroll"><div className="board-head"><h2>KosmosAI 사용량</h2></div>
+            <div className="empty">{data.error || 'KOSMOSAI_TOKEN이 설정되지 않았습니다 — env.local에 추가 후 재시작하세요.'}</div>
+        </div>
+    );
+
+    const d = data!;
+    const dayMax = Math.max(1, ...(d.days || []).map(x => x.count));
+    // 팀별 합계
+    const teamTotals = new Map<string, number>();
+    (d.users || []).forEach(u => { const t = teamOf(u.email) || '(미배정)'; teamTotals.set(t, (teamTotals.get(t) || 0) + u.count); });
+    const teamRows = [...teamTotals.entries()].sort((a, b) => b[1] - a[1]);
+    const userMax = Math.max(1, ...(d.users || []).map(u => u.count));
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>KosmosAI 사용량</h2>
+                <span className="poc-sub">portal-api 감사 로그 · 최근 {d.window_days}일</span>
+                <span style={{flex: 1}}/>
+                <select className="jselect" value={days} onChange={e => pick(Number(e.target.value))}>
+                    <option value={7}>7일</option>
+                    <option value={30}>30일</option>
+                    <option value={90}>90일</option>
+                </select>
+                <button className="refresh-btn" onClick={() => load(days, true)} disabled={loading}>{loading ? '…' : '↻ 새로고침'}</button>
+            </div>
+            {d.error && <div className="error-banner">⚠ {d.error}</div>}
+            {d.truncated && <div className="warn-banner">⚠ 데이터가 많아 일부만 집계되었습니다(상한 도달).</div>}
+
+            <div className="cards">
+                <div className="card"><div className="card-v">{comma(d.total)}</div><div className="card-l">총 작업</div></div>
+                <div className="card"><div className="card-v">{comma((d.users || []).length)}</div><div className="card-l">활성 사용자</div></div>
+                <div className="card"><div className="card-v">{comma((d.services || []).length)}</div><div className="card-l">서비스</div></div>
+                <div className="card"><div className="card-v">{d.window_days}일</div><div className="card-l">기간</div></div>
+            </div>
+
+            {(d.days || []).length > 0 && (
+                <section className="stat-block">
+                    <h3>일별 작업량</h3>
+                    <div className="kos-days">
+                        {d.days.map(x => (
+                            <div key={x.name} className="kos-day" title={`${x.name} · ${comma(x.count)}`}>
+                                <span className="kos-day-c">{x.count}</span>
+                                <div className="kos-bar" style={{height: `${4 + Math.round((x.count / dayMax) * 120)}px`}}/>
+                                <span className="kos-day-l">{x.name.slice(5)}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
+
+            <div className="stat-cols">
+                <section className="stat-block">
+                    <h3>사용자별 <span className="count">{(d.users || []).length}</span></h3>
+                    {(d.users || []).length === 0 && <div className="empty">데이터 없음</div>}
+                    {(d.users || []).slice(0, 20).map(u => (
+                        <div key={u.email} className="lb-row">
+                            <span className="lb-name">{label(u.email)}{teamOf(u.email) && <span className="lb-sub"> · {teamOf(u.email)}</span>}</span>
+                            <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
+                            <span className="lb-score">{comma(u.count)}</span>
+                        </div>
+                    ))}
+                </section>
+                <section className="stat-block">
+                    <h3>서비스별</h3>
+                    {(d.services || []).map(s => (
+                        <div key={s.name} className="lb-row">
+                            <span className="lb-name">{s.name}</span>
+                            <span className="lb-score">{comma(s.count)}</span>
+                        </div>
+                    ))}
+                    <h3 style={{marginTop: 14}}>작업 유형</h3>
+                    {(d.actions || []).map(s => (
+                        <div key={s.name} className="lb-row">
+                            <span className="lb-name">{s.name}</span>
+                            <span className="lb-score">{comma(s.count)}</span>
+                        </div>
+                    ))}
+                </section>
+            </div>
+
+            {teamRows.length > 0 && (
+                <section className="stat-block">
+                    <h3>팀별 작업량</h3>
+                    {teamRows.map(([t, n]) => (
+                        <div key={t} className="lb-row"><span className="lb-name">{t}</span><span className="lb-score">{comma(n)}</span></div>
+                    ))}
+                </section>
+            )}
+            {d.updated && <p className="hint">업데이트: {timeAgo(d.updated)} · 로그인 횟수·세션시간은 플랫폼이 제공하지 않아 작업(활동) 기준입니다.</p>}
+        </div>
+    );
+}
+
 type SettingsSection = 'ai' | 'teams' | 'members' | 'entities';
 
 function SettingsView() {
@@ -3280,7 +3405,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'settings' ? <SettingsView/> : (
+                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'kosmos' ? <KosmosUsageView/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
