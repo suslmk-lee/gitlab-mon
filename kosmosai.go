@@ -30,24 +30,33 @@ type KosmosNameCount struct {
 	Name  string `json:"name"`
 	Count int    `json:"count"`
 }
-type KosmosUserCount struct {
-	Email string `json:"email"`
-	Count int    `json:"count"`
+type KosmosUserStat struct {
+	Email      string `json:"email"`
+	Count      int    `json:"count"`
+	Failed     int    `json:"failed"`      // 비성공(FAILURE/DENIED/ERROR) 작업 수
+	ActiveDays int    `json:"active_days"` // 활동한 고유 일수
+	IPs        int    `json:"ips"`         // 고유 IP 수
+	LastAt     string `json:"last_at"`     // 마지막 활동 (RFC3339)
 }
 
 // KosmosUsageResult is everything the 사용량 화면 needs.
 type KosmosUsageResult struct {
-	Configured bool                       `json:"configured"`
-	Error      string                     `json:"error"`
-	Updated    string                     `json:"updated"`
-	WindowDays int                        `json:"window_days"`
-	Total      int                        `json:"total"`
-	Days       []KosmosNameCount          `json:"days"`      // 날짜(YYYY-MM-DD) → 건수 (날짜 오름차순)
-	Users      []KosmosUserCount          `json:"users"`     // 사용자 이메일 → 총 건수 (내림차순)
-	Services   []KosmosNameCount          `json:"services"`  // 서비스 → 건수 (내림차순)
-	Actions    []KosmosNameCount          `json:"actions"`   // 액션(CREATE/UPDATE/…) → 건수
-	UserDays   map[string]map[string]int  `json:"user_days"` // email → 날짜 → 건수
-	Truncated  bool                       `json:"truncated"`
+	Configured    bool                      `json:"configured"`
+	Error         string                    `json:"error"`
+	Updated       string                    `json:"updated"`
+	WindowDays    int                       `json:"window_days"`
+	Total         int                       `json:"total"`
+	FailedTotal   int                       `json:"failed_total"` // 비성공 작업 수
+	Days          []KosmosNameCount         `json:"days"`         // 날짜 → 건수 (오름차순)
+	Hours         []int                     `json:"hours"`        // 24: 시간대(KST)별
+	Weekdays      []int                     `json:"weekdays"`     // 7: 요일(일~토)별
+	Users         []KosmosUserStat          `json:"users"`        // 사용자별 (내림차순)
+	Services      []KosmosNameCount         `json:"services"`     // 서비스 → 건수
+	Actions       []KosmosNameCount         `json:"actions"`      // 액션 → 건수
+	Resources     []KosmosNameCount         `json:"resources"`    // 리소스 타입 → 건수
+	Results       []KosmosNameCount         `json:"results"`      // 결과(SUCCESS/FAILURE/…) → 건수
+	UserDays      map[string]map[string]int `json:"user_days"`    // email → 날짜 → 건수
+	Truncated     bool                      `json:"truncated"`
 }
 
 func (a *App) kosmosBaseURL() string {
@@ -119,10 +128,13 @@ func (a *App) kosmosJWT(ctx context.Context, force bool) (string, error) {
 }
 
 type kosmosAuditItem struct {
-	ActorEmail string `json:"actor_email"`
-	Action     string `json:"action"`
-	Service    string `json:"service"`
-	Timestamp  string `json:"timestamp"`
+	ActorEmail   string `json:"actor_email"`
+	ActorIP      string `json:"actor_ip"`
+	Action       string `json:"action"`
+	Result       string `json:"result"`
+	Service      string `json:"service"`
+	ResourceType string `json:"resource_type"`
+	Timestamp    string `json:"timestamp"`
 }
 type kosmosAuditPage struct {
 	Total int               `json:"total"`
@@ -177,9 +189,21 @@ func (a *App) KosmosUsage(days int, force bool) KosmosUsageResult {
 		return KosmosUsageResult{Configured: true, Error: err.Error()}
 	}
 
+	loc, lerr := time.LoadLocation("Asia/Seoul")
+	if lerr != nil {
+		loc = time.FixedZone("KST", 9*3600)
+	}
 	startTime := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour).Format(time.RFC3339)
-	res := KosmosUsageResult{Configured: true, WindowDays: days, UserDays: map[string]map[string]int{}}
-	byUser, byService, byAction, byDay := map[string]int{}, map[string]int{}, map[string]int{}, map[string]int{}
+	res := KosmosUsageResult{Configured: true, WindowDays: days, UserDays: map[string]map[string]int{}, Hours: make([]int, 24), Weekdays: make([]int, 7)}
+	byService, byAction, byDay := map[string]int{}, map[string]int{}, map[string]int{}
+	byResource, byResult := map[string]int{}, map[string]int{}
+	uAgg := map[string]*kosmosUserAgg{}
+	getu := func(e string) *kosmosUserAgg {
+		if uAgg[e] == nil {
+			uAgg[e] = &kosmosUserAgg{days: map[string]bool{}, ips: map[string]bool{}}
+		}
+		return uAgg[e]
+	}
 
 	for pageNo := 0; pageNo < kosmosMaxPages; pageNo++ {
 		q := url.Values{}
@@ -212,13 +236,38 @@ func (a *App) KosmosUsage(days int, force bool) KosmosUsageResult {
 				date = date[:10]
 			}
 			res.Total++
-			byUser[email]++
 			byDay[date]++
 			if it.Service != "" {
 				byService[it.Service]++
 			}
 			if it.Action != "" {
 				byAction[it.Action]++
+			}
+			if it.ResourceType != "" {
+				byResource[it.ResourceType]++
+			}
+			if it.Result != "" {
+				byResult[it.Result]++
+			}
+			if it.Result != "" && it.Result != "SUCCESS" {
+				res.FailedTotal++
+			}
+			if t, e := time.Parse(time.RFC3339, it.Timestamp); e == nil {
+				kt := t.In(loc)
+				res.Hours[kt.Hour()]++
+				res.Weekdays[int(kt.Weekday())]++
+			}
+			u := getu(email)
+			u.count++
+			u.days[date] = true
+			if it.ActorIP != "" {
+				u.ips[it.ActorIP] = true
+			}
+			if it.Result != "" && it.Result != "SUCCESS" {
+				u.failed++
+			}
+			if it.Timestamp > u.last {
+				u.last = it.Timestamp
 			}
 			if res.UserDays[email] == nil {
 				res.UserDays[email] = map[string]int{}
@@ -234,9 +283,20 @@ func (a *App) KosmosUsage(days int, force bool) KosmosUsageResult {
 	}
 
 	res.Days = kosmosByDate(byDay)
-	res.Users = kosmosByUserDesc(byUser)
 	res.Services = kosmosByCountDesc(byService)
 	res.Actions = kosmosByCountDesc(byAction)
+	res.Resources = kosmosByCountDesc(byResource)
+	res.Results = kosmosByCountDesc(byResult)
+	res.Users = make([]KosmosUserStat, 0, len(uAgg))
+	for e, s := range uAgg {
+		res.Users = append(res.Users, KosmosUserStat{Email: e, Count: s.count, Failed: s.failed, ActiveDays: len(s.days), IPs: len(s.ips), LastAt: s.last})
+	}
+	sort.Slice(res.Users, func(i, j int) bool {
+		if res.Users[i].Count != res.Users[j].Count {
+			return res.Users[i].Count > res.Users[j].Count
+		}
+		return res.Users[i].Email < res.Users[j].Email
+	})
 	res.Updated = time.Now().Format(time.RFC3339)
 
 	a.mu.Lock()
@@ -268,16 +328,10 @@ func kosmosByCountDesc(m map[string]int) []KosmosNameCount {
 	})
 	return out
 }
-func kosmosByUserDesc(m map[string]int) []KosmosUserCount {
-	out := make([]KosmosUserCount, 0, len(m))
-	for k, v := range m {
-		out = append(out, KosmosUserCount{Email: k, Count: v})
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
-		}
-		return out[i].Email < out[j].Email
-	})
-	return out
+type kosmosUserAgg struct {
+	count  int
+	failed int
+	days   map[string]bool
+	ips    map[string]bool
+	last   string // 마지막 timestamp(RFC3339) — 동일 포맷이라 문자열 비교 가능
 }

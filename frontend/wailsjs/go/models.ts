@@ -810,18 +810,26 @@ export namespace main {
 	        this.count = source["count"];
 	    }
 	}
-	export class KosmosUserCount {
+	export class KosmosUserStat {
 	    email: string;
 	    count: number;
+	    failed: number;
+	    active_days: number;
+	    ips: number;
+	    last_at: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new KosmosUserCount(source);
+	        return new KosmosUserStat(source);
 	    }
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.email = source["email"];
 	        this.count = source["count"];
+	        this.failed = source["failed"];
+	        this.active_days = source["active_days"];
+	        this.ips = source["ips"];
+	        this.last_at = source["last_at"];
 	    }
 	}
 	export class KosmosUsageResult {
@@ -830,10 +838,15 @@ export namespace main {
 	    updated: string;
 	    window_days: number;
 	    total: number;
+	    failed_total: number;
 	    days: KosmosNameCount[];
-	    users: KosmosUserCount[];
+	    hours: number[];
+	    weekdays: number[];
+	    users: KosmosUserStat[];
 	    services: KosmosNameCount[];
 	    actions: KosmosNameCount[];
+	    resources: KosmosNameCount[];
+	    results: KosmosNameCount[];
 	    user_days: Record<string, any>;
 	    truncated: boolean;
 	
@@ -848,10 +861,15 @@ export namespace main {
 	        this.updated = source["updated"];
 	        this.window_days = source["window_days"];
 	        this.total = source["total"];
+	        this.failed_total = source["failed_total"];
 	        this.days = this.convertValues(source["days"], KosmosNameCount);
-	        this.users = this.convertValues(source["users"], KosmosUserCount);
+	        this.hours = source["hours"];
+	        this.weekdays = source["weekdays"];
+	        this.users = this.convertValues(source["users"], KosmosUserStat);
 	        this.services = this.convertValues(source["services"], KosmosNameCount);
 	        this.actions = this.convertValues(source["actions"], KosmosNameCount);
+	        this.resources = this.convertValues(source["resources"], KosmosNameCount);
+	        this.results = this.convertValues(source["results"], KosmosNameCount);
 	        this.user_days = source["user_days"];
 	        this.truncated = source["truncated"];
 	    }

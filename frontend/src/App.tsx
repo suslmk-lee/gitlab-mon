@@ -2854,11 +2854,14 @@ function EntitiesSection() {
 
 // ---- KosmosAI 사용량(활동) 통계 — portal-api 감사 로그 집계 (온디맨드·저부하) ----
 interface KUsage {
-    configured: boolean; error: string; updated: string; window_days: number; total: number;
+    configured: boolean; error: string; updated: string; window_days: number; total: number; failed_total: number;
     days: { name: string; count: number }[];
-    users: { email: string; count: number }[];
+    hours: number[]; weekdays: number[];
+    users: { email: string; count: number; failed: number; active_days: number; ips: number; last_at: string }[];
     services: { name: string; count: number }[];
     actions: { name: string; count: number }[];
+    resources: { name: string; count: number }[];
+    results: { name: string; count: number }[];
     user_days: Record<string, Record<string, number>>;
     truncated: boolean;
 }
@@ -2894,6 +2897,8 @@ function KosmosUsageView() {
     (d.users || []).forEach(u => { const t = teamOf(u.email) || '(미배정)'; teamTotals.set(t, (teamTotals.get(t) || 0) + u.count); });
     const teamRows = [...teamTotals.entries()].sort((a, b) => b[1] - a[1]);
     const userMax = Math.max(1, ...(d.users || []).map(u => u.count));
+    const hourMax = Math.max(1, ...(d.hours || []));
+    const wdMax = Math.max(1, ...(d.weekdays || []));
 
     return (
         <div className="stats scroll">
@@ -2914,8 +2919,9 @@ function KosmosUsageView() {
             <div className="cards">
                 <div className="card"><div className="card-v">{comma(d.total)}</div><div className="card-l">총 작업</div></div>
                 <div className="card"><div className="card-v">{comma((d.users || []).length)}</div><div className="card-l">활성 사용자</div></div>
+                <div className="card"><div className="card-v" style={{WebkitTextFillColor: (d.failed_total || 0) > 0 ? 'var(--red)' : undefined}}>{comma(d.failed_total || 0)}</div><div className="card-l">실패·거부</div></div>
                 <div className="card"><div className="card-v">{comma((d.services || []).length)}</div><div className="card-l">서비스</div></div>
-                <div className="card"><div className="card-v">{d.window_days}일</div><div className="card-l">기간</div></div>
+                <div className="card"><div className="card-v">{comma((d.resources || []).length)}</div><div className="card-l">리소스 타입</div></div>
             </div>
 
             {(d.days || []).length > 0 && (
@@ -2935,30 +2941,62 @@ function KosmosUsageView() {
 
             <div className="stat-cols">
                 <section className="stat-block">
-                    <h3>사용자별 <span className="count">{(d.users || []).length}</span></h3>
-                    {(d.users || []).length === 0 && <div className="empty">데이터 없음</div>}
-                    {(d.users || []).slice(0, 20).map(u => (
-                        <div key={u.email} className="lb-row">
-                            <span className="lb-name">{label(u.email)}{teamOf(u.email) && <span className="lb-sub"> · {teamOf(u.email)}</span>}</span>
-                            <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
-                            <span className="lb-score">{comma(u.count)}</span>
+                    <h3>시간대별 (KST)</h3>
+                    <div className="kos-days">
+                        {(d.hours || []).map((c, h) => (
+                            <div key={h} className="kos-day" title={`${h}시 · ${comma(c)}`}>
+                                <span className="kos-day-c">{c || ''}</span>
+                                <div className="kos-bar" style={{height: `${3 + Math.round((c / hourMax) * 96)}px`, background: 'var(--purple)'}}/>
+                                <span className="kos-day-l">{h}</span>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+                <section className="stat-block">
+                    <h3>요일별</h3>
+                    {(d.weekdays || []).map((c, i) => (
+                        <div key={i} className="lb-row">
+                            <span className="lb-name" style={{minWidth: 28}}>{WD[i]}</span>
+                            <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(c / wdMax) * 100}%`}}/></div>
+                            <span className="lb-score">{comma(c)}</span>
                         </div>
                     ))}
                 </section>
+            </div>
+
+            <section className="stat-block">
+                <h3>사용자별 <span className="count">{(d.users || []).length}</span></h3>
+                {(d.users || []).length === 0 && <div className="empty">데이터 없음</div>}
+                {(d.users || []).slice(0, 30).map(u => (
+                    <div key={u.email} className="lb-row" title={u.last_at ? `마지막 활동 ${timeAgo(u.last_at)}` : ''}>
+                        <span className="lb-name">{label(u.email)}
+                            <span className="lb-sub"> · {teamOf(u.email) || '미배정'} · {u.active_days}일 · IP {u.ips}{u.failed > 0 ? ` · 실패 ${u.failed}` : ''}</span>
+                        </span>
+                        <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
+                        <span className="lb-score">{comma(u.count)}</span>
+                    </div>
+                ))}
+            </section>
+
+            <div className="stat-cols">
                 <section className="stat-block">
                     <h3>서비스별</h3>
                     {(d.services || []).map(s => (
-                        <div key={s.name} className="lb-row">
-                            <span className="lb-name">{s.name}</span>
-                            <span className="lb-score">{comma(s.count)}</span>
-                        </div>
+                        <div key={s.name} className="lb-row"><span className="lb-name">{s.name}</span><span className="lb-score">{comma(s.count)}</span></div>
                     ))}
-                    <h3 style={{marginTop: 14}}>작업 유형</h3>
+                    <h3 style={{marginTop: 14}}>리소스 타입</h3>
+                    {(d.resources || []).slice(0, 12).map(s => (
+                        <div key={s.name} className="lb-row"><span className="lb-name">{s.name}</span><span className="lb-score">{comma(s.count)}</span></div>
+                    ))}
+                </section>
+                <section className="stat-block">
+                    <h3>작업 유형</h3>
                     {(d.actions || []).map(s => (
-                        <div key={s.name} className="lb-row">
-                            <span className="lb-name">{s.name}</span>
-                            <span className="lb-score">{comma(s.count)}</span>
-                        </div>
+                        <div key={s.name} className="lb-row"><span className="lb-name">{s.name}</span><span className="lb-score">{comma(s.count)}</span></div>
+                    ))}
+                    <h3 style={{marginTop: 14}}>결과</h3>
+                    {(d.results || []).map(s => (
+                        <div key={s.name} className="lb-row"><span className="lb-name" style={{color: s.name !== 'SUCCESS' ? 'var(--red)' : undefined}}>{s.name}</span><span className="lb-score">{comma(s.count)}</span></div>
                     ))}
                 </section>
             </div>
