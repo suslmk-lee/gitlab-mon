@@ -697,6 +697,7 @@ export namespace main {
 	}
 	export class KCUserStat {
 	    user: string;
+	    name: string;
 	    product: string;
 	    count: number;
 	    failed: number;
@@ -711,6 +712,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.user = source["user"];
+	        this.name = source["name"];
 	        this.product = source["product"];
 	        this.count = source["count"];
 	        this.failed = source["failed"];
@@ -812,6 +814,7 @@ export namespace main {
 	}
 	export class KosmosUserStat {
 	    email: string;
+	    name: string;
 	    count: number;
 	    failed: number;
 	    active_days: number;
@@ -825,6 +828,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.email = source["email"];
+	        this.name = source["name"];
 	        this.count = source["count"];
 	        this.failed = source["failed"];
 	        this.active_days = source["active_days"];

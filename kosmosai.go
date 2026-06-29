@@ -32,6 +32,7 @@ type KosmosNameCount struct {
 }
 type KosmosUserStat struct {
 	Email      string `json:"email"`
+	Name       string `json:"name"` // Keycloak 디렉터리 실명(있으면)
 	Count      int    `json:"count"`
 	Failed     int    `json:"failed"`      // 비성공(FAILURE/DENIED/ERROR) 작업 수
 	ActiveDays int    `json:"active_days"` // 활동한 고유 일수
@@ -229,7 +230,7 @@ func (a *App) KosmosUsage(days int, force bool) KosmosUsageResult {
 		for _, it := range page.Items {
 			email := it.ActorEmail
 			if email == "" {
-				email = "(미상)"
+				email = "시스템/자동" // actor_email 없는 자동/백그라운드 작업
 			}
 			date := it.Timestamp
 			if len(date) >= 10 {
@@ -287,9 +288,10 @@ func (a *App) KosmosUsage(days int, force bool) KosmosUsageResult {
 	res.Actions = kosmosByCountDesc(byAction)
 	res.Resources = kosmosByCountDesc(byResource)
 	res.Results = kosmosByCountDesc(byResult)
+	dir := a.kcDirectory(ctx) // Keycloak 실명(이메일 매칭). 미구성 시 빈 맵.
 	res.Users = make([]KosmosUserStat, 0, len(uAgg))
 	for e, s := range uAgg {
-		res.Users = append(res.Users, KosmosUserStat{Email: e, Count: s.count, Failed: s.failed, ActiveDays: len(s.days), IPs: len(s.ips), LastAt: s.last})
+		res.Users = append(res.Users, KosmosUserStat{Email: e, Name: dir[strings.ToLower(e)], Count: s.count, Failed: s.failed, ActiveDays: len(s.days), IPs: len(s.ips), LastAt: s.last})
 	}
 	sort.Slice(res.Users, func(i, j int) bool {
 		if res.Users[i].Count != res.Users[j].Count {

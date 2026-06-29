@@ -45,6 +45,7 @@ type KCNameCount struct {
 }
 type KCUserStat struct {
 	User       string `json:"user"`        // username(이메일 등)
+	Name       string `json:"name"`        // Keycloak 디렉터리 실명(있으면)
 	Product    string `json:"product"`     // 주 사용 제품(최다 clientId)
 	Count      int    `json:"count"`       // 로그인 수
 	Failed     int    `json:"failed"`      // 로그인 실패 수
@@ -218,6 +219,75 @@ func kcEventUser(e kcEvent) string {
 	return "(미상)"
 }
 
+// kcKoreanName builds a display name from Keycloak first/last (한국식: 성+이름).
+func kcKoreanName(first, last string) string {
+	first, last = strings.TrimSpace(first), strings.TrimSpace(last)
+	if first == "" && last == "" {
+		return ""
+	}
+	if first != "" && last != "" {
+		return last + first // 전 + 성주 = 전성주
+	}
+	return first + last
+}
+
+// kcDirectory returns a cached email/username(lower) → 실명 map from Keycloak users.
+// Small directory(수십 명) + 30분 캐시라 저부하. 미구성/오류 시 빈 맵.
+func (a *App) kcDirectory(ctx context.Context) map[string]string {
+	a.mu.Lock()
+	dir := a.kcDir
+	at := a.kcDirAt
+	a.mu.Unlock()
+	if dir != nil && time.Since(at) < 30*time.Minute {
+		return dir
+	}
+	if !a.KeycloakConfigured() {
+		return map[string]string{}
+	}
+	_, realm := a.kcBase()
+	out := map[string]string{}
+	for first := 0; first < 5000; first += 100 {
+		q := url.Values{}
+		q.Set("first", fmt.Sprint(first))
+		q.Set("max", "100")
+		body, status, err := a.kcGET(ctx, "/admin/realms/"+realm+"/users", q)
+		if err != nil || status != http.StatusOK {
+			break
+		}
+		var us []struct {
+			Email     string `json:"email"`
+			Username  string `json:"username"`
+			FirstName string `json:"firstName"`
+			LastName  string `json:"lastName"`
+		}
+		if json.Unmarshal(body, &us) != nil {
+			break
+		}
+		for _, u := range us {
+			name := kcKoreanName(u.FirstName, u.LastName)
+			if name == "" {
+				continue
+			}
+			if e := strings.ToLower(strings.TrimSpace(u.Email)); e != "" {
+				out[e] = name
+			}
+			if un := strings.ToLower(strings.TrimSpace(u.Username)); un != "" {
+				if _, ok := out[un]; !ok {
+					out[un] = name
+				}
+			}
+		}
+		if len(us) < 100 {
+			break
+		}
+	}
+	a.mu.Lock()
+	a.kcDir = out
+	a.kcDirAt = time.Now()
+	a.mu.Unlock()
+	return out
+}
+
 // kcFetchEvents pages all events of a type since dateFrom (YYYY-MM-DD).
 func (a *App) kcFetchEvents(ctx context.Context, realm, etype, dateFrom string) ([]kcEvent, bool, error) {
 	var all []kcEvent
@@ -386,6 +456,7 @@ func (a *App) KeycloakLoginStats(days int, force bool) KCLoginResult {
 		}
 	}
 
+	dir := a.kcDirectory(ctx) // email/username → 실명
 	res.Days = kcSortByName(byDay)
 	res.Products = kcSortByCount(byProduct)
 	res.Users = make([]KCUserStat, 0, len(users))
@@ -395,7 +466,7 @@ func (a *App) KeycloakLoginStats(days int, force bool) KCLoginResult {
 			last = time.UnixMilli(s.last).Format(time.RFC3339)
 		}
 		res.Users = append(res.Users, KCUserStat{
-			User: u, Product: kcTopKey(s.product), Count: s.count, Failed: s.failed,
+			User: u, Name: dir[strings.ToLower(u)], Product: kcTopKey(s.product), Count: s.count, Failed: s.failed,
 			ActiveDays: len(s.days), IPs: len(s.ips), LastLogin: last,
 		})
 	}

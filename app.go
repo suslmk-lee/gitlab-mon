@@ -119,6 +119,8 @@ type App struct {
 	kcTokenExp          time.Time      // Keycloak 토큰 만료
 	kcCache             *KCLoginResult // 로그인/세션 집계 캐시
 	kcCacheAt           time.Time
+	kcDir               map[string]string // Keycloak 디렉터리 email/username→실명 캐시
+	kcDirAt             time.Time
 	db                  *sql.DB  // 로컬 기록 저장소 (회의/통화 노트)
 	cycle               int      // poll cycle counter
 	lastSig             uint64   // signature of the last published snapshot

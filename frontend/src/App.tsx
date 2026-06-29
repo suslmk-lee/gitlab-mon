@@ -2857,7 +2857,7 @@ interface KUsage {
     configured: boolean; error: string; updated: string; window_days: number; total: number; failed_total: number;
     days: { name: string; count: number }[];
     hours: number[]; weekdays: number[];
-    users: { email: string; count: number; failed: number; active_days: number; ips: number; last_at: string }[];
+    users: { email: string; name: string; count: number; failed: number; active_days: number; ips: number; last_at: string }[];
     services: { name: string; count: number }[];
     actions: { name: string; count: number }[];
     resources: { name: string; count: number }[];
@@ -2880,7 +2880,7 @@ function KosmosUsageView() {
     const pick = (d: number) => { setDays(d); load(d, false); };
 
     const memberByEmail = (e: string) => members.find(m => m.email && m.email.toLowerCase() === e.toLowerCase());
-    const label = (email: string) => { const m = memberByEmail(email); return m ? m.name : email; };
+    const label = (email: string, kcName?: string) => { const m = memberByEmail(email); return m ? m.name : (kcName || email); };
     const teamOf = (email: string) => { const m = memberByEmail(email); return m ? (teamNameOf(teams, m.team_id) || '') : ''; };
 
     if (loading && !data) return <SectionLoading rows={6}/>;
@@ -2969,7 +2969,7 @@ function KosmosUsageView() {
                 {(d.users || []).length === 0 && <div className="empty">데이터 없음</div>}
                 {(d.users || []).slice(0, 30).map(u => (
                     <div key={u.email} className="lb-row" title={u.last_at ? `마지막 활동 ${timeAgo(u.last_at)}` : ''}>
-                        <span className="lb-name">{label(u.email)}
+                        <span className="lb-name">{label(u.email, u.name)}
                             <span className="lb-sub"> · {teamOf(u.email) || '미배정'} · {u.active_days}일 · IP {u.ips}{u.failed > 0 ? ` · 실패 ${u.failed}` : ''}</span>
                         </span>
                         <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
@@ -3019,7 +3019,7 @@ interface KLogin {
     configured: boolean; error: string; updated: string; window_days: number; total: number; failed_total: number;
     days: { name: string; count: number }[];
     hours: number[]; weekdays: number[];
-    users: { user: string; product: string; count: number; failed: number; active_days: number; ips: number; last_login: string }[];
+    users: { user: string; name: string; product: string; count: number; failed: number; active_days: number; ips: number; last_login: string }[];
     products: { name: string; count: number }[];
     sessions: { product: string; client_id: string; active: number }[];
     active_total: number; session_avg_min: number; session_samples: number; truncated: boolean;
@@ -3041,7 +3041,7 @@ function KLoginView() {
     const pick = (d: number) => { setDays(d); load(d, false); };
 
     const memberByEmail = (e: string) => members.find(m => m.email && m.email.toLowerCase() === (e || '').toLowerCase());
-    const label = (user: string) => { const m = memberByEmail(user); return m ? m.name : user; };
+    const label = (user: string, kcName?: string) => { const m = memberByEmail(user); return m ? m.name : (kcName || user); };
     const teamOf = (user: string) => { const m = memberByEmail(user); return m ? (teamNameOf(teams, m.team_id) || '') : ''; };
 
     if (loading && !data) return <SectionLoading rows={6}/>;
@@ -3125,7 +3125,7 @@ function KLoginView() {
                 {(d.users || []).length === 0 && <div className="empty">로그인 이벤트 없음 (보존기간 상향 후 누적됩니다)</div>}
                 {(d.users || []).slice(0, 30).map(u => (
                     <div key={u.user} className="lb-row" title={u.last_login ? `마지막 로그인 ${timeAgo(u.last_login)}` : ''}>
-                        <span className="lb-name">{label(u.user)}
+                        <span className="lb-name">{label(u.user, u.name)}
                             <span className="lb-sub"> · {teamOf(u.user) || u.product} · {u.active_days}일 · IP {u.ips}{u.failed > 0 ? ` · 실패 ${u.failed}` : ''}</span>
                         </span>
                         <div className="lb-bar-wrap"><div className="lb-bar" style={{width: `${(u.count / userMax) * 100}%`}}/></div>
