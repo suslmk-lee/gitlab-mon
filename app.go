@@ -121,6 +121,8 @@ type App struct {
 	kcCacheAt           time.Time
 	kcDir               map[string]string // Keycloak 디렉터리 email/username→실명 캐시
 	kcDirAt             time.Time
+	dailyBusy           bool   // 데일리 리포트 자동 생성 진행 중
+	dailyDoneDate       string // 자동 생성 완료한 전일 날짜(YYYY-MM-DD)
 	db                  *sql.DB  // 로컬 기록 저장소 (회의/통화 노트)
 	cycle               int      // poll cycle counter
 	lastSig             uint64   // signature of the last published snapshot
@@ -255,6 +257,7 @@ func (a *App) saveCache() {
 
 func (a *App) pollLoop(ctx context.Context) {
 	a.refresh()
+	a.maybeRunDailyReports() // 앱 시작 시 전일 요약 누락분 보충(09시 이후)
 	t := time.NewTicker(pollInterval)
 	defer t.Stop()
 	for {
@@ -263,6 +266,7 @@ func (a *App) pollLoop(ctx context.Context) {
 			return
 		case <-t.C:
 			a.refresh()
+			a.maybeRunDailyReports()
 		}
 	}
 }

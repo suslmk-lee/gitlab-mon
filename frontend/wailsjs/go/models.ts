@@ -614,6 +614,50 @@ export namespace main {
 	        this.commits = source["commits"];
 	    }
 	}
+	export class DailyReport {
+	    date: string;
+	    username: string;
+	    name: string;
+	    team: string;
+	    summary: string;
+	    commit_count: number;
+	    commits: string[];
+	    generated_at: string;
+	    error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DailyReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.date = source["date"];
+	        this.username = source["username"];
+	        this.name = source["name"];
+	        this.team = source["team"];
+	        this.summary = source["summary"];
+	        this.commit_count = source["commit_count"];
+	        this.commits = source["commits"];
+	        this.generated_at = source["generated_at"];
+	        this.error = source["error"];
+	    }
+	}
+	export class DailyTarget {
+	    username: string;
+	    name: string;
+	    team: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DailyTarget(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.username = source["username"];
+	        this.name = source["name"];
+	        this.team = source["team"];
+	    }
+	}
 	export class Entity {
 	    id: string;
 	    name: string;

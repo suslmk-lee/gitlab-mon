@@ -6,6 +6,10 @@ export function ConfluenceSpaces() {
   return window['go']['main']['App']['ConfluenceSpaces']();
 }
 
+export function DailyReportTargets() {
+  return window['go']['main']['App']['DailyReportTargets']();
+}
+
 export function DeleteNote(arg1) {
   return window['go']['main']['App']['DeleteNote'](arg1);
 }
@@ -28,6 +32,10 @@ export function GetAuthorMappings() {
 
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
+}
+
+export function GetDailyReport(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetDailyReport'](arg1, arg2, arg3);
 }
 
 export function GetEntities() {
@@ -76,6 +84,10 @@ export function KosmosAIConfigured() {
 
 export function KosmosUsage(arg1, arg2) {
   return window['go']['main']['App']['KosmosUsage'](arg1, arg2);
+}
+
+export function ListDailyReports(arg1, arg2) {
+  return window['go']['main']['App']['ListDailyReports'](arg1, arg2);
 }
 
 export function ListNotes(arg1) {

@@ -5,6 +5,8 @@ import {main} from '../models';
 
 export function ConfluenceSpaces():Promise<Array<confluence.Space>>;
 
+export function DailyReportTargets():Promise<Array<main.DailyTarget>>;
+
 export function DeleteNote(arg1:number):Promise<string>;
 
 export function DownloadNoteAudio(arg1:number,arg2:boolean):Promise<main.AudioDownloadResult>;
@@ -16,6 +18,8 @@ export function GetAIConfig():Promise<main.AIConfig>;
 export function GetAuthorMappings():Promise<main.AuthorMappingData>;
 
 export function GetConfig():Promise<Record<string, any>>;
+
+export function GetDailyReport(arg1:string,arg2:string,arg3:boolean):Promise<main.DailyReport>;
 
 export function GetEntities():Promise<Array<main.Entity>>;
 
@@ -40,6 +44,8 @@ export function KeycloakLoginStats(arg1:number,arg2:boolean):Promise<main.KCLogi
 export function KosmosAIConfigured():Promise<boolean>;
 
 export function KosmosUsage(arg1:number,arg2:boolean):Promise<main.KosmosUsageResult>;
+
+export function ListDailyReports(arg1:string,arg2:number):Promise<Array<main.DailyReport>>;
 
 export function ListNotes(arg1:string):Promise<Array<main.Note>>;
 

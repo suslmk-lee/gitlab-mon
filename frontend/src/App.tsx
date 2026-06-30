@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured, KeycloakLoginStats, KeycloakConfigured} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured, KeycloakLoginStats, KeycloakConfigured, GetDailyReport, DailyReportTargets, ListDailyReports} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -65,7 +65,7 @@ interface Progress { phase: string; done: number; total: number }
 type Period = 7 | 30 | 90;
 const PERIODS: Period[] = [7, 30, 90];
 
-type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'poc' | 'records' | 'search' | 'kosmos' | 'klogin' | 'settings';
+type Tab = 'home' | 'feed' | 'stats' | 'ci' | 'jira' | 'weekly' | 'daily' | 'poc' | 'records' | 'search' | 'kosmos' | 'klogin' | 'settings';
 // 사이드바 IA — 그룹별 메뉴. 향후 기록/거래처/설정 등 확장 지점.
 const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: string }[] }[] = [
     {label: '개발', items: [
@@ -76,6 +76,7 @@ const NAV_GROUPS: { label: string; items: { tab: Tab; label: string; icon: strin
     {label: '업무', items: [
         {tab: 'jira', label: 'Jira', icon: 'jira'},
         {tab: 'weekly', label: '주간 리포트', icon: 'calendar'},
+        {tab: 'daily', label: '데일리 리포트', icon: 'note'},
         {tab: 'kosmos', label: 'KosmosAI 사용량', icon: 'ai'},
         {tab: 'klogin', label: '로그인 현황', icon: 'users'},
     ]},
@@ -3155,6 +3156,90 @@ function KLoginView() {
     );
 }
 
+// ---- 데일리 리포트 (특정 인원의 하루 커밋 AI 요약) ----
+interface DReport {
+    date: string; username: string; name: string; team: string;
+    summary: string; commit_count: number; commits: string[]; generated_at: string; error: string;
+}
+interface DTarget { username: string; name: string; team: string }
+function DailyReportView() {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const [targets, setTargets] = useState<DTarget[]>([]);
+    const [user, setUser] = useState('');
+    const [date, setDate] = useState(yesterday);
+    const [rep, setRep] = useState<DReport | null>(null);
+    const [hist, setHist] = useState<DReport[]>([]);
+    const [loading, setLoading] = useState(false);
+    const [showCommits, setShowCommits] = useState(false);
+
+    useEffect(() => {
+        DailyReportTargets().then((t: any) => { const list = t || []; setTargets(list); if (list.length && !user) setUser(list[0].username); });
+    }, []);
+    const load = (u: string, d: string, force: boolean) => {
+        if (!u) return;
+        setLoading(true); setShowCommits(false);
+        GetDailyReport(u, d, force).then((r: any) => { setRep(r); setLoading(false); });
+        ListDailyReports(u, 30).then((h: any) => setHist(h || []));
+    };
+    useEffect(() => { if (user) load(user, date, false); }, [user]);
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>데일리 리포트</h2>
+                <span className="poc-sub">전일 커밋 기반 AI 요약 · 매일 9시 자동</span>
+                <span style={{flex: 1}}/>
+                <select className="jselect" value={user} onChange={e => setUser(e.target.value)} style={{maxWidth: 200}}>
+                    {targets.length === 0 && <option value="">대상 없음</option>}
+                    {targets.map(t => <option key={t.username} value={t.username}>{t.name}{t.team ? ` · ${t.team}` : ''}</option>)}
+                </select>
+                <input className="ent-in" type="date" value={date} max={yesterday} onChange={e => { setDate(e.target.value); load(user, e.target.value, false); }} style={{width: 150}}/>
+                <button className="refresh-btn" onClick={() => load(user, date, true)} disabled={loading || !user}>{loading ? '생성 중…' : '↻ 재생성'}</button>
+            </div>
+            {targets.length === 0 && <div className="empty">대상 인원이 없습니다 — 설정 → 팀원에서 GitLab 계정이 있는 팀원을 등록하세요.</div>}
+
+            {rep && (
+                <>
+                    <div className="board-head" style={{marginTop: 4}}>
+                        <h3 style={{margin: 0}}>{rep.name || rep.username} · {rep.date}</h3>
+                        <span className="poc-sub">{rep.team || ''}</span>
+                        <span style={{flex: 1}}/>
+                        <span className="chip"><span className="chip-label">커밋</span> {comma(rep.commit_count)}</span>
+                    </div>
+                    {rep.error && <div className="error-banner">⚠ {rep.error}</div>}
+                    {loading
+                        ? <section className="stat-block"><SkelRows rows={4}/></section>
+                        : rep.summary
+                            ? <section className="stat-block note-preview"><Markdown text={rep.summary}/></section>
+                            : <section className="stat-block"><div className="empty">{rep.commit_count === 0 ? '이 날의 커밋이 없습니다.' : '요약이 아직 생성되지 않았습니다 — 재생성을 눌러주세요.'}</div></section>}
+                    {rep.commit_count > 0 && (
+                        <section className="stat-block">
+                            <h3 className="collapse-h" onClick={() => setShowCommits(v => !v)}>근거 커밋 <span className="count">{rep.commit_count}</span> <span className="hint">{showCommits ? '▲' : '▼'}</span></h3>
+                            {showCommits && (rep.commits || []).map((c, i) => (
+                                <div key={i} className="pipe"><span className="pipe-proj">{c}</span></div>
+                            ))}
+                        </section>
+                    )}
+                    {rep.generated_at && <p className="hint">생성: {timeAgo(rep.generated_at)}</p>}
+                </>
+            )}
+
+            {hist.length > 0 && (
+                <section className="stat-block">
+                    <h3>지난 리포트 <span className="count">{hist.length}</span></h3>
+                    {hist.map(h => (
+                        <div key={h.date} className={`pipe ${h.date === date ? 'pill-cur' : ''}`} onClick={() => { setDate(h.date); load(user, h.date, false); }}>
+                            <span className="jira-key">{h.date}</span>
+                            <span className="pipe-proj">{(h.summary || '').replace(/[#*\-\n]/g, ' ').trim().slice(0, 80) || '활동 없음'}</span>
+                            <span className="jira-assignee">커밋 {h.commit_count}</span>
+                        </div>
+                    ))}
+                </section>
+            )}
+        </div>
+    );
+}
+
 type SettingsSection = 'ai' | 'teams' | 'members' | 'entities';
 
 function SettingsView() {
@@ -3585,7 +3670,7 @@ function App() {
                 {snap.error && <div className="error-banner">⚠ {snap.error}</div>}
                 {snap.warning && <div className="warn-banner">⚠ {snap.warning}</div>}
 
-                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'kosmos' ? <KosmosUsageView/> : tab === 'klogin' ? <KLoginView/> : tab === 'settings' ? <SettingsView/> : (
+                {tab === 'home' ? <DashboardView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }} onTab={setTab}/> : tab === 'stats' ? <StatsView snap={snap} period={period} onDrill={drill}/> : tab === 'ci' ? <CIView snap={snap} period={period} onDrill={drill}/> : tab === 'jira' ? <JiraView snap={snap} period={period}/> : tab === 'weekly' ? <WeeklyView onDrill={drill}/> : tab === 'poc' ? <HubView snap={snap} period={period} focus={hubFocus}/> : tab === 'records' ? <RecordsView snap={snap}/> : tab === 'search' ? <SearchView snap={snap} onEntity={(id) => { setHubFocus(id); setTab('poc'); }}/> : tab === 'kosmos' ? <KosmosUsageView/> : tab === 'klogin' ? <KLoginView/> : tab === 'daily' ? <DailyReportView/> : tab === 'settings' ? <SettingsView/> : (
             <main className="grid">
                 <section className="panel feed">
                     <div className="panel-head">
