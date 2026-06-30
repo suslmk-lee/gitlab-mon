@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"gitlab-mon/internal/config"
@@ -104,31 +105,40 @@ func claudeComplete(key, model, prompt string, maxTokens int) (string, error) {
 }
 
 // openaiComplete — OpenAI-compatible /chat/completions (OpenAI·MiniMax·custom).
+// 신형 OpenAI 모델은 max_tokens 대신 max_completion_tokens를 요구하므로, max_tokens로
+// 시도 후 해당 오류면 max_completion_tokens로 1회 재시도(vLLM/MiniMax 등과도 호환).
 func openaiComplete(base, key, model, prompt string, maxTokens int) (string, error) {
-	b, _ := json.Marshal(map[string]any{
-		"model": model, "max_tokens": maxTokens,
-		"messages": []map[string]string{{"role": "user", "content": prompt}},
-	})
-	req, err := http.NewRequest(http.MethodPost, base+"/chat/completions", bytes.NewReader(b))
-	if err != nil {
-		return "", err
+	try := func(tokenParam string) (string, error) {
+		b, _ := json.Marshal(map[string]any{
+			"model": model, tokenParam: maxTokens,
+			"messages": []map[string]string{{"role": "user", "content": prompt}},
+		})
+		req, err := http.NewRequest(http.MethodPost, base+"/chat/completions", bytes.NewReader(b))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Content-Type", "application/json")
+		var out struct {
+			Choices []struct {
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if err := aiPost(req, &out); err != nil {
+			return "", err
+		}
+		if len(out.Choices) == 0 {
+			return "", fmt.Errorf("AI 응답이 비었습니다")
+		}
+		return out.Choices[0].Message.Content, nil
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	var out struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
+	txt, err := try("max_tokens")
+	if err != nil && strings.Contains(err.Error(), "max_completion_tokens") {
+		return try("max_completion_tokens")
 	}
-	if err := aiPost(req, &out); err != nil {
-		return "", err
-	}
-	if len(out.Choices) == 0 {
-		return "", fmt.Errorf("AI 응답이 비었습니다")
-	}
-	return out.Choices[0].Message.Content, nil
+	return txt, err
 }
 
 // geminiComplete — Google Generative Language generateContent.
