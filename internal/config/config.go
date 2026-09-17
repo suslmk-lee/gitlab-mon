@@ -30,7 +30,11 @@ type Config struct {
 	KeycloakClientSecret string `json:"-"` // env KEYCLOAK_CLIENT_SECRET
 }
 
-const defaultURL = "https://ci.quantumcns.ai"
+const defaultURL = "https://git.quantumcns.ai"
+
+// LegacyGitLabURL은 호스트 변경 전 주소다. 같은 인스턴스가 이름만 바뀐 것이라
+// (프로젝트 ID 동일) 저장된 설정·Keychain 토큰·캐시에 남은 링크를 이 값으로 알아본다.
+const LegacyGitLabURL = "https://ci.quantumcns.ai"
 
 // Load resolves config in priority order:
 //  1. GITLAB_URL / GITLAB_TOKEN environment variables
@@ -50,10 +54,20 @@ func Load() Config {
 		}
 	}
 
+	// 구 호스트로 저장된 설정은 새 호스트로 올린다. Keychain 조회보다 먼저 해야
+	// 아래 토큰 조회가 새 계정을 보고, startup의 Save가 config.json에 굳힌다.
+	if strings.TrimRight(cfg.GitLabURL, "/") == LegacyGitLabURL {
+		cfg.GitLabURL = defaultURL
+	}
+
 	// 3. Keychain
 	if keychainAvailable() {
 		if t, ok := keychainGet(keychainAccount(cfg.GitLabURL)); ok {
 			cfg.GitLabToken = t
+		} else if t, ok := keychainGet(keychainAccount(LegacyGitLabURL)); ok && cfg.GitLabURL == defaultURL {
+			// 호스트 변경 전 계정에 있던 토큰을 새 계정으로 이전 (같은 인스턴스라 그대로 유효)
+			cfg.GitLabToken = t
+			_ = keychainSet(keychainAccount(defaultURL), t)
 		} else if legacyFileToken != "" {
 			// 구버전 config.json의 평문 토큰을 Keychain으로 이전
 			if keychainSet(keychainAccount(cfg.GitLabURL), legacyFileToken) == nil {

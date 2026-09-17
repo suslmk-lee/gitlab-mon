@@ -928,7 +928,11 @@ func (a *App) SaveConfig(gitlabURL, token string) string {
 	return ""
 }
 
-// OpenURL opens a link in the default browser.
+// OpenURL opens a link in the default browser. 디스크 캐시에는 호스트 변경 전에
+// 수집한 구 호스트 링크가 90일치 남아 있으므로, 경로가 같은 현재 호스트로 바꿔 연다.
 func (a *App) OpenURL(url string) {
-	runtime.BrowserOpenURL(a.ctx, url)
+	a.mu.Lock()
+	base := a.cfg.GitLabURL
+	a.mu.Unlock()
+	runtime.BrowserOpenURL(a.ctx, strings.Replace(url, config.LegacyGitLabURL, base, 1))
 }

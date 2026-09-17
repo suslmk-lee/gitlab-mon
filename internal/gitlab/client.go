@@ -12,7 +12,7 @@ import (
 
 // Client is a minimal GitLab REST v4 API client.
 type Client struct {
-	BaseURL string // e.g. https://ci.quantumcns.ai
+	BaseURL string // e.g. https://git.quantumcns.ai
 	Token   string
 	HTTP    *http.Client
 }

@@ -341,7 +341,7 @@ function LastUpdated({ts}: { ts: string }) {
 }
 
 function SetupView({onSaved}: { onSaved: () => void }) {
-    const [url, setUrl] = useState('https://ci.quantumcns.ai');
+    const [url, setUrl] = useState('https://git.quantumcns.ai');
     const [token, setToken] = useState('');
     const [err, setErr] = useState('');
     const save = async () => {
