@@ -1354,6 +1354,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
     };
     const days = useMemo(() => lastNDays(period), [snap.fetched_at, period]);
     const xEvery = period === 90 ? 10 : 5;
+    const [openUser, setOpenUser] = useState<string | null>(null);
     const events = useMemo(() => {
         const cut = periodCutoff(period);
         return snap.events.filter(e => new Date(e.created_at).getTime() >= cut);
@@ -1538,17 +1539,47 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                         <button className="btn btn-sm" onClick={resetWeights}>기본값 복원</button>
                     </div>
                 )}
-                {top.map((u, i) => (
-                    <div key={u.username} className="lb-row">
-                        <span className="lb-rank">{i + 1}</span>
-                        <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}{u.name}</span>
-                        <div className="lb-bar-wrap">
-                            <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
+                {top.map((u, i) => {
+                    const vals = days.map(d => u.byDay.get(d) ?? 0);
+                    const uMax = Math.max(1, ...vals);
+                    const active = vals.filter(v => v > 0).length;
+                    const peak = vals.indexOf(Math.max(...vals));
+                    const open = openUser === u.username;
+                    return (
+                        <div key={u.username}>
+                            <div className="lb-row lb-row-click" title="클릭하면 일별 활동지수 펼치기" onClick={() => setOpenUser(open ? null : u.username)}>
+                                <span className="lb-rank">{i + 1}</span>
+                                <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={e => { e.stopPropagation(); onDrill(u.username); }}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}{u.name}</span>
+                                <div className="lb-bar-wrap">
+                                    <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
+                                </div>
+                                <span className="lb-score">{Math.round(u.score)}</span>
+                                <span className="lb-detail">커밋 {u.commits} · push {u.pushes} · MR {u.mrs} · 머지 {u.merges} · 댓글 {u.comments}</span>
+                                <span className="lb-spark">
+                                    {vals.map((v, j) => <i key={j} style={{height: `${v > 0 ? Math.max(8, (v / uMax) * 100) : 0}%`}}/>)}
+                                </span>
+                                <span className="lb-chev">{open ? '▾' : '▸'}</span>
+                            </div>
+                            {open && (
+                                <div className="lb-daily">
+                                    <div className="lb-daily-sum">
+                                        일별 활동지수 :: 활동일 {active}/{days.length}일 · 일평균 {(u.score / days.length).toFixed(1)} · 활동일 평균 {active ? (u.score / active).toFixed(1) : '0'} · 최고 {days[peak].slice(5)} {Math.round(vals[peak])}점
+                                    </div>
+                                    <div className={`bars ${period === 90 ? 'bars-dense' : ''}`}>
+                                        {days.map((d, j) => (
+                                            <div key={d} className="bar-col" title={`${d} · ${Math.round(vals[j])}점`}>
+                                                <div className="bar-stack">
+                                                    {vals[j] > 0 && <div style={{height: `${(vals[j] / uMax) * 100}%`, background: 'var(--accent)'}}/>}
+                                                </div>
+                                                <span className="bar-x">{j % xEvery === 0 ? d.slice(8) : ''}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                        <span className="lb-score">{Math.round(u.score)}</span>
-                        <span className="lb-detail">커밋 {u.commits} · push {u.pushes} · MR {u.mrs} · 머지 {u.merges} · 댓글 {u.comments}</span>
-                    </div>
-                ))}
+                    );
+                })}
                 {top.length === 0 && <div className="empty">데이터 없음</div>}
             </section>
 

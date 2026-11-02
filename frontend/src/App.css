@@ -508,6 +508,14 @@ html, body, #root {
 .settings-sub { margin: 18px 0 2px; font-size: 14px; font-weight: 700; }
 .lb-score { min-width: 44px; text-align: right; font-weight: 700; font-size: 12px; flex-shrink: 0; }
 .lb-detail { color: var(--muted); font-size: 11px; width: 260px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 사용자별 일별 활동지수: 행 미니 스파크라인 + 클릭 시 펼침 */
+.lb-row-click { cursor: pointer; border-radius: 6px; }
+.lb-row-click:hover { background: rgba(255, 255, 255, 0.03); }
+.lb-spark { width: 140px; height: 18px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 1px; }
+.lb-spark i { flex: 1; background: var(--accent); opacity: 0.8; border-radius: 1px; }
+.lb-chev { width: 12px; color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.lb-daily { margin: 4px 0 10px 28px; padding: 10px 12px; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--stroke); border-radius: 10px; }
+.lb-daily-sum { color: var(--muted); font-size: 11.5px; margin-bottom: 8px; }
 
 /* heatmap */
 .heat { display: flex; flex-direction: column; gap: 3px; overflow-x: auto; }
