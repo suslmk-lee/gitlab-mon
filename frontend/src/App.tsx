@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured, KeycloakLoginStats, KeycloakConfigured, GetDailyReport, DailyReportTargets, ListDailyReports} from "../wailsjs/go/main/App";
+import {GetSnapshot, Refresh, SaveConfig, OpenURL, SaveCSV, JiraMove, JiraDetail, WeeklyReport, WeeklyReportUsers, SummarizeWeek, GetAuthorMappings, SaveAuthorMappings, GetEntities, SaveEntities, GetTeams, SaveTeams, GetMembers, SaveMembers as SaveMembersRaw, ListNotes, SaveNote, DeleteNote, ShareNote, ConfluenceSpaces, SummarizeNote, GetAIConfig, SaveAIConfig, SaveNoteAudio, ReadAudioBase64, DownloadNoteAudio, HasFFmpeg, GenerateMinutesFromAudio, HasPython, KosmosUsage, KosmosAIConfigured, KeycloakLoginStats, KeycloakConfigured, GetDailyReport, DailyReportTargets, ListDailyReports} from "../wailsjs/go/main/App";
 import {EventsOn} from "../wailsjs/runtime/runtime";
 
 // ---- Types mirroring the Go Snapshot ----
@@ -284,14 +284,35 @@ function eventScore(e: GLEvent, w: Weights): number {
     return w.other;
 }
 
+// ---- 표시 이름 :: GitLab 계정 → 팀원 '이름+직책' (설정 → 이름 매핑) ----
+// 팀원(members.json)의 gitlab_username 으로 연결. App이 로드하고 저장 시 'members-changed'로 갱신
+let USER_LABEL = new Map<string, string>(); // gitlab username(소문자) → '이민규수석'
+// ponytail: '수석연구원' → '수석' 처럼 끝의 '연구원'만 떼어 호칭으로. 다른 직책 체계면 여기서 규칙 추가
+const shortTitle = (role: string) => (role || '').trim().replace(/\s*연구원$/, '');
+const memberLabel = (m: { name: string; role: string }) => m.name.trim() + shortTitle(m.role);
+function setMemberLabels(ms: Member[]) {
+    USER_LABEL = new Map(ms.filter(m => m.active && m.gitlab_username.trim())
+        .map(m => [m.gitlab_username.trim().toLowerCase(), memberLabel(m)]));
+}
+function userLabel(username: string | undefined, fallback?: string): string {
+    return USER_LABEL.get((username || '').toLowerCase()) || fallback || username || '?';
+}
+
 function authorLabel(a: Author | undefined): string {
     if (!a) return '?';
-    return a.name || a.username;
+    return userLabel(a.username, a.name || a.username);
 }
 
 // 이름 앞에 봇 아이콘(봇 계정일 때)을 붙여 렌더
 function AuthorName({a}: { a: Author | undefined }) {
     return <>{a?.is_bot && <Icon name="bot" size={13} className="bot-ico"/>}{authorLabel(a)}</>;
+}
+
+// 팀원 저장 :: 저장 후 표시 이름 갱신 알림 (모든 저장 경로가 이 래퍼를 거침)
+async function SaveMembers(ms: Member[]): Promise<string> {
+    const r = await SaveMembersRaw(ms as any);
+    window.dispatchEvent(new Event('members-changed'));
+    return r;
 }
 
 // ---- Per-user aggregation ----
@@ -1472,7 +1493,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
         const head = ['순위', 'username', '이름', '활동지수', '커밋', 'push', 'MR생성', '머지', '댓글', '추가라인', '삭제라인'];
         const rows = users.map((u, i) => {
             const c = codeAgg.get(u.username);
-            return [i + 1, u.username, u.name, Math.round(u.score), u.commits, u.pushes, u.mrs, u.merges, u.comments, c?.add ?? '', c?.del ?? ''];
+            return [i + 1, u.username, userLabel(u.username, u.name), Math.round(u.score), u.commits, u.pushes, u.mrs, u.merges, u.comments, c?.add ?? '', c?.del ?? ''];
         });
         const csv = '\uFEFF' + [head, ...rows].map(r => r.map(q).join(',')).join('\n');
         const name = `gitlab-mon-활동-${period}일-${new Date().toISOString().slice(0, 10)}.csv`;
@@ -1549,7 +1570,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                         <div key={u.username}>
                             <div className="lb-row lb-row-click" title="클릭하면 일별 활동지수 펼치기" onClick={() => setOpenUser(open ? null : u.username)}>
                                 <span className="lb-rank">{i + 1}</span>
-                                <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={e => { e.stopPropagation(); onDrill(u.username); }}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}{u.name}</span>
+                                <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={e => { e.stopPropagation(); onDrill(u.username); }}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}{userLabel(u.username, u.name)}</span>
                                 <div className="lb-bar-wrap">
                                     <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
                                 </div>
@@ -1589,10 +1610,10 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 <div className={`heat ${period === 90 ? 'heat-sm' : ''}`}>
                     {top.map(u => (
                         <div key={u.username} className="heat-row">
-                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={12} className="bot-ico"/>}{u.name}</span>
+                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={12} className="bot-ico"/>}{userLabel(u.username, u.name)}</span>
                             {days.map(d => {
                                 const v = u.byDay.get(d) ?? 0;
-                                return <span key={d} className={`cell cell-${level(v)}`} title={`${u.name} · ${d} · ${Math.round(v)}점`}/>;
+                                return <span key={d} className={`cell cell-${level(v)}`} title={`${userLabel(u.username, u.name)} · ${d} · ${Math.round(v)}점`}/>;
                             })}
                         </div>
                     ))}
@@ -1653,7 +1674,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 </h3>
                 {codeByUser.map(([user, r]) => (
                     <div key={user} className="lb-row">
-                        <span className="lb-name drill" title={`${user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(user)}>{user}</span>
+                        <span className="lb-name drill" title={`${user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(user)}>{userLabel(user)}</span>
                         <div className="lb-bar-wrap code-bar-wrap">
                             <div className="code-bar-add" style={{width: `${(r.add / codeMax) * 100}%`}}/>
                             <div className="code-bar-del" style={{width: `${(r.del / codeMax) * 100}%`}}/>
@@ -1671,7 +1692,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 <h3>리뷰어 활동 Top 10 <span className="hint">승인 ×2 + MR 댓글 기준 · 승인은 현재 시점 집계</span></h3>
                 {reviewers.map(r => (
                     <div key={r.user} className="lb-row">
-                        <span className="lb-name drill" title={`${r.user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(r.user)}>{r.user}</span>
+                        <span className="lb-name drill" title={`${r.user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(r.user)}>{userLabel(r.user)}</span>
                         <div className="lb-bar-wrap">
                             <div className="lb-bar lb-bar-review" style={{width: `${((r.approvals * 2 + r.comments) / reviewerMax) * 100}%`}}/>
                         </div>
@@ -1869,7 +1890,7 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
 
     const copyText = () => {
         if (!rep) return;
-        const lines: string[] = [`# ${rep.username} 주간 보고 (${rep.week_start} ~ ${rep.week_end})`,
+        const lines: string[] = [`# ${userLabel(rep.username)} 주간 보고 (${rep.week_start} ~ ${rep.week_end})`,
             `커밋 ${rep.total_commits} · +${rep.total_add}/-${rep.total_del} · 머지 ${rep.merged_count} · MR생성 ${rep.opened_count}`, ''];
         for (const p of rep.projects ?? []) {
             lines.push(`## ${p.path} (커밋 ${p.commit_count}, +${p.add}/-${p.del})`);
@@ -1890,7 +1911,7 @@ function WeeklyView({onDrill}: { onDrill: (q: string) => void }) {
                 <h2>주간 리포트</h2>
                 <select className="jselect" value={user} onChange={e => setUser(e.target.value)}>
                     <option value="">사용자 선택…</option>
-                    {users.map(u => <option key={u} value={u}>{u}</option>)}
+                    {users.map(u => <option key={u} value={u}>{userLabel(u) === u ? u : `${userLabel(u)} (${u})`}</option>)}
                 </select>
                 <div className="tabs">
                     {[0, 1, 2, 3].map(o => (
@@ -2653,6 +2674,97 @@ function TeamsSection() {
 }
 
 // ---- 팀원 관리 (리스트 + 추가/수정 모달) — 회의록 참석자 선택·git 매핑 소스 ----
+// ---- 이름 매핑 :: GitLab 계정 → 팀원 (연결하면 앱 전체에서 '이민규수석' 형태로 표시) ----
+function NameMappingSection() {
+    const [users, setUsers] = useState<GLUserLite[] | null>(null);
+    const [members, setMembers] = useState<Member[]>([]);
+    const [map, setMap] = useState<Map<string, string>>(new Map()); // gitlab username(소문자) → member id
+    const [q, setQ] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [msg, setMsg] = useState('');
+
+    const reload = () => Promise.all([GetAuthorMappings(), GetMembers()]).then(([d, ms]: any[]) => {
+        const list: Member[] = ms || [];
+        setUsers(((d?.users ?? []) as GLUserLite[]).slice().sort((a, b) => (a.name || a.username).localeCompare(b.name || b.username)));
+        setMembers(list);
+        setMap(new Map(list.filter(m => m.gitlab_username.trim()).map(m => [m.gitlab_username.trim().toLowerCase(), m.id])));
+    });
+    useEffect(() => { reload(); }, []);
+
+    if (!users) return <SectionLoading/>;
+    const active = members.filter(m => m.active);
+    const taken = new Set(map.values());
+    const assign = (u: string, id: string) => setMap(prev => {
+        const next = new Map(prev);
+        if (id) next.set(u, id); else next.delete(u);
+        return next;
+    });
+    const save = async () => {
+        setBusy(true);
+        const glSet = new Set(users.map(u => u.username.toLowerCase()));
+        const byMember = new Map([...map].map(([u, id]) => [id, u]));
+        const next = members.map(m => {
+            const u = byMember.get(m.id);
+            if (u) return {...m, gitlab_username: users.find(x => x.username.toLowerCase() === u)?.username ?? u};
+            // 이 화면에서 연결 해제한 경우만 비움 (목록에 없는 계정은 그대로 둠)
+            if (glSet.has(m.gitlab_username.trim().toLowerCase())) return {...m, gitlab_username: ''};
+            return m;
+        });
+        await SaveMembers(next);
+        await reload();
+        setBusy(false);
+        setMsg('저장됨 :: 통계·피드·리포트 이름에 반영');
+        setTimeout(() => setMsg(''), 4000);
+    };
+    const ql = q.trim().toLowerCase();
+    const shown = users.filter(u => !ql || u.username.toLowerCase().includes(ql) || (u.name || '').toLowerCase().includes(ql)
+        || (USER_LABEL.get(u.username.toLowerCase()) || '').toLowerCase().includes(ql));
+    const linked = shown.filter(u => map.has(u.username.toLowerCase()));
+    const rest = shown.filter(u => !map.has(u.username.toLowerCase()));
+
+    const row = (u: GLUserLite) => {
+        const id = map.get(u.username.toLowerCase()) ?? '';
+        const m = members.find(x => x.id === id);
+        return (
+            <div key={u.username} className="map-row">
+                <div className="map-id">
+                    <b>{u.name || u.username}</b>
+                    <span className="map-email">@{u.username}</span>
+                </div>
+                <span className="map-arrow">→</span>
+                <select className="jselect" value={id} onChange={e => assign(u.username.toLowerCase(), e.target.value)}>
+                    <option value="">— 연결 안 함 —</option>
+                    {active.map(x => <option key={x.id} value={x.id} disabled={taken.has(x.id) && x.id !== id}>{x.name}{x.role ? ` · ${x.role}` : ''}</option>)}
+                </select>
+                <b className="map-target" style={{minWidth: 90}}>{m ? memberLabel(m) : ''}</b>
+            </div>
+        );
+    };
+
+    return (
+        <div className="stats scroll">
+            <div className="board-head">
+                <h2>이름 매핑</h2>
+                <span style={{flex: 1}}/>
+                {msg && <span className="toast">{msg}</span>}
+                <button className="refresh-btn" onClick={save} disabled={busy}>{busy ? '저장 중…' : '저장'}</button>
+            </div>
+            <p className="hint">GitLab 계정을 팀원과 연결하면 통계·피드·리포트 등 앱 전체에서 ‘이름+직책’(예: 이민규수석)으로 표시됩니다. 직책 끝의 ‘연구원’은 생략합니다. 팀원은 ‘팀원’ 메뉴에서 등록합니다.</p>
+            <input className="ent-in" placeholder="이름 · 계정 검색" value={q} onChange={e => setQ(e.target.value)} style={{margin: '8px 0', maxWidth: 320}}/>
+            {active.length === 0 && <div className="empty">등록된 팀원이 없습니다 :: ‘팀원’ 메뉴에서 먼저 등록하세요</div>}
+            <section className="stat-block">
+                <h3>연결됨 <span className="count">{linked.length}</span></h3>
+                {linked.map(row)}
+                {linked.length === 0 && <div className="empty">연결된 계정 없음</div>}
+            </section>
+            <section className="stat-block">
+                <h3>미연결 GitLab 계정 <span className="count">{rest.length}</span></h3>
+                {rest.map(row)}
+            </section>
+        </div>
+    );
+}
+
 function MembersSection({onMapping}: { onMapping: () => void }) {
     const [list, setList] = useState<Member[] | null>(null);
     const [teams, setTeams] = useState<Team[]>([]);
@@ -3222,7 +3334,7 @@ function DailyReportView() {
                 <span style={{flex: 1}}/>
                 <select className="jselect" value={user} onChange={e => setUser(e.target.value)} style={{maxWidth: 200}}>
                     {targets.length === 0 && <option value="">대상 없음</option>}
-                    {targets.map(t => <option key={t.username} value={t.username}>{t.name}{t.team ? ` · ${t.team}` : ''}</option>)}
+                    {targets.map(t => <option key={t.username} value={t.username}>{userLabel(t.username, t.name)}{t.team ? ` · ${t.team}` : ''}</option>)}
                 </select>
                 <input className="ent-in" type="date" value={date} max={yesterday} onChange={e => { setDate(e.target.value); load(user, e.target.value, false); }} style={{width: 150}}/>
                 <button className="refresh-btn" onClick={() => load(user, date, true)} disabled={loading || !user}>{loading ? '생성 중…' : '↻ 재생성'}</button>
@@ -3232,7 +3344,7 @@ function DailyReportView() {
             {rep && (
                 <>
                     <div className="board-head" style={{marginTop: 4}}>
-                        <h3 style={{margin: 0}}>{rep.name || rep.username} · {rep.date}</h3>
+                        <h3 style={{margin: 0}}>{userLabel(rep.username, rep.name)} · {rep.date}</h3>
                         <span className="poc-sub">{rep.team || ''}</span>
                         <span style={{flex: 1}}/>
                         <span className="chip"><span className="chip-label">커밋</span> {comma(rep.commit_count)}</span>
@@ -3271,7 +3383,7 @@ function DailyReportView() {
     );
 }
 
-type SettingsSection = 'ai' | 'teams' | 'members' | 'entities';
+type SettingsSection = 'ai' | 'teams' | 'members' | 'names' | 'entities';
 
 function SettingsView() {
     const [sec, setSec] = useState<SettingsSection>('ai');
@@ -3280,6 +3392,7 @@ function SettingsView() {
         {id: 'ai', label: 'AI 설정', icon: 'ai', desc: '제공자·API 키'},
         {id: 'teams', label: '팀', icon: 'users', desc: '조직 팀 관리'},
         {id: 'members', label: '팀원', icon: 'user', desc: '구성원·git 매핑'},
+        {id: 'names', label: '이름 매핑', icon: 'users', desc: 'GitLab 계정 → 팀원 실명'},
         {id: 'entities', label: '거래처 / 프로젝트', icon: 'company', desc: 'GitLab·Jira·Confluence'},
     ];
     return (
@@ -3297,6 +3410,7 @@ function SettingsView() {
                 {sec === 'ai' && <div className="stats scroll"><AISettings/></div>}
                 {sec === 'teams' && <TeamsSection/>}
                 {sec === 'members' && <MembersSection onMapping={() => setMapping(true)}/>}
+                {sec === 'names' && <NameMappingSection/>}
                 {sec === 'entities' && <EntitiesSection/>}
             </div>
             {mapping && <AuthorMappingModal onClose={() => setMapping(false)} onSaved={() => {}}/>}
@@ -3551,7 +3665,11 @@ function App() {
             setProgress(p.total > 0 && p.done < p.total ? p : null);
         });
         const t = setInterval(() => setTick(n => n + 1), 30_000); // re-render for relative times
-        return () => { off(); offT(); offP(); clearInterval(t); };
+        // 표시 이름(팀원 매핑) 로드 + 저장 시 갱신
+        const loadLabels = () => GetMembers().then((ms: any) => { setMemberLabels(ms || []); setTick(n => n + 1); }).catch(() => {});
+        loadLabels();
+        window.addEventListener('members-changed', loadLabels);
+        return () => { off(); offT(); offP(); clearInterval(t); window.removeEventListener('members-changed', loadLabels); };
     }, []);
 
     useEffect(() => {
@@ -3589,6 +3707,7 @@ function App() {
             if (!q) return true;
             return (e.author?.username || '').toLowerCase().includes(q)
                 || (e.author?.name || '').toLowerCase().includes(q)
+                || authorLabel(e.author).toLowerCase().includes(q)
                 || (e.project_path || '').toLowerCase().includes(q)
                 || (e.target_title || '').toLowerCase().includes(q)
                 || (e.push_data?.ref || '').toLowerCase().includes(q);
@@ -3760,7 +3879,7 @@ function App() {
                                         <div className="mr-title">{mr.draft && <span className="draft">Draft</span>}!{mr.iid} {mr.title}</div>
                                         <div className="mr-meta">
                                             <span>{mr.project_path}</span>
-                                            <span>{mr.author?.username} · {timeAgo(mr.updated_at)}</span>
+                                            <span>{authorLabel(mr.author)} · {timeAgo(mr.updated_at)}</span>
                                         </div>
                                     </div>
                                 </div>
