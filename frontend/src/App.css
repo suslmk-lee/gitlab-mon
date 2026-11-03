@@ -236,6 +236,8 @@ html, body, #root {
     transition: all 0.2s;
 }
 .pill:hover { border-color: var(--stroke-strong); color: var(--text); }
+/* 종류 없는 선택 칩(팀원 선택 등) 기본 선택 표시 :: 아래 종류별 .pill-on.pill-* 가 덮어씀 */
+.pill-on { border-color: var(--accent); color: var(--accent); background: rgba(108, 182, 255, 0.14); box-shadow: 0 0 12px rgba(108, 182, 255, 0.2); }
 .pill-on.pill-push { border-color: var(--green); color: var(--green); background: rgba(74, 222, 128, 0.12); box-shadow: 0 0 12px rgba(74, 222, 128, 0.2); }
 .pill-on.pill-merge { border-color: var(--purple); color: var(--purple); background: rgba(192, 132, 252, 0.12); box-shadow: 0 0 12px rgba(192, 132, 252, 0.2); }
 .pill-on.pill-mr { border-color: var(--accent); color: var(--accent); background: rgba(108, 182, 255, 0.12); box-shadow: 0 0 12px rgba(108, 182, 255, 0.2); }

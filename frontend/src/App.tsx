@@ -2653,7 +2653,7 @@ function TeamsSection() {
                                         const other = m.team_id && !here ? teamNameOf(list, m.team_id) : '';
                                         return (
                                             <button key={m.id} type="button" className={`pill ${here ? 'pill-on' : ''}`} onClick={() => toggleMember(m.id)}>
-                                                {m.name}{other ? <span className="pill-sub"> · {other}</span> : ''}
+                                                {here && '✓ '}{m.name}{other ? <span className="pill-sub"> · {other}</span> : ''}
                                             </button>
                                         );
                                     })}
