@@ -14,20 +14,12 @@ def lerp(a, b, t):
 
 img = Image.new('RGBA', (S, S), (0, 0, 0, 0))
 
-# 배경 :: macOS 아이콘 그리드(824px 본체, 100px 여백) 둥근 사각형 + 남색 세로 그라데이션
-pad, rad = 100 * k, 185 * k
-grad = Image.new('RGBA', (S, S))
-gd = ImageDraw.Draw(grad)
+# 배경 :: 캔버스 전체를 채우는 남색 세로 그라데이션 (풀블리드)
+# macOS 26은 투명 여백 있는 아이콘을 회색 틀에 가두고, 꽉 찬 정사각형은 시스템이 둥근 모서리로 마스킹한다
 top, bot = (30, 52, 102), (9, 14, 32)
+gd = ImageDraw.Draw(img)
 for y in range(S):
     gd.line([(0, y), (S, y)], fill=lerp(top, bot, y / S) + (255,))
-mask = Image.new('L', (S, S), 0)
-ImageDraw.Draw(mask).rounded_rectangle([pad, pad, S - pad, S - pad], rad, fill=255)
-img.paste(grad, (0, 0), mask)
-
-# 유리 테두리
-ImageDraw.Draw(img).rounded_rectangle([pad, pad, S - pad, S - pad], rad,
-                                      outline=(255, 255, 255, 40), width=round(6 * k))
 
 # 활동 막대(히트맵 느낌) :: 하단 반투명 막대 5개
 ov = Image.new('RGBA', (S, S), (0, 0, 0, 0))  # 반투명은 draw가 픽셀을 덮어쓰므로 오버레이 후 합성
@@ -61,7 +53,9 @@ cx, cy, r = 814 * k, 560 * k, 52 * k
 d = ImageDraw.Draw(img)
 d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(74, 222, 128, 255), outline=(9, 14, 32, 255), width=round(14 * k))
 
-icon = img.resize((1024, 1024), Image.LANCZOS)
+# 그림 영역을 키우려고 가운데를 잘라 확대 (여백 60px 기준 → 약 1.13배)
+c = 60 * k
+icon = img.crop((c, c, S - c, S - c)).resize((1024, 1024), Image.LANCZOS)
 icon.save(ROOT / 'build/appicon.png')
 icon.save(ROOT / 'build/windows/icon.ico', sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 (ROOT / 'frontend/public').mkdir(exist_ok=True)
