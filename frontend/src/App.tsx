@@ -286,16 +286,27 @@ function eventScore(e: GLEvent, w: Weights): number {
 
 // ---- 표시 이름 :: GitLab 계정 → 팀원 '이름+직책' (설정 → 이름 매핑) ----
 // 팀원(members.json)의 gitlab_username 으로 연결. App이 로드하고 저장 시 'members-changed'로 갱신
-let USER_LABEL = new Map<string, string>(); // gitlab username(소문자) → '이민규수석'
+let USER_INFO = new Map<string, { name: string; title: string }>(); // gitlab username(소문자) → 이름 · 직급
 // ponytail: '수석연구원' → '수석' 처럼 끝의 '연구원'만 떼어 호칭으로. 다른 직책 체계면 여기서 규칙 추가
 const shortTitle = (role: string) => (role || '').trim().replace(/\s*연구원$/, '');
-const memberLabel = (m: { name: string; role: string }) => m.name.trim() + shortTitle(m.role);
+const memberInfo = (m: { name: string; role: string }) => ({name: m.name.trim(), title: shortTitle(m.role)});
+const infoText = (i: { name: string; title: string }) => i.title ? `${i.name} ${i.title}` : i.name;
 function setMemberLabels(ms: Member[]) {
-    USER_LABEL = new Map(ms.filter(m => m.active && m.gitlab_username.trim())
-        .map(m => [m.gitlab_username.trim().toLowerCase(), memberLabel(m)]));
+    USER_INFO = new Map(ms.filter(m => m.active && m.gitlab_username.trim())
+        .map(m => [m.gitlab_username.trim().toLowerCase(), memberInfo(m)]));
 }
+// 문자열 표시용 (title 속성 · option · CSV · 검색): '이민규 수석'
 function userLabel(username: string | undefined, fallback?: string): string {
-    return USER_LABEL.get((username || '').toLowerCase()) || fallback || username || '?';
+    const i = USER_INFO.get((username || '').toLowerCase());
+    return i ? infoText(i) : fallback || username || '?';
+}
+// 화면 표시용: 이름 + 작고 얇은 직급
+function NameTitle({i}: { i: { name: string; title: string } }) {
+    return <>{i.name}{i.title && <span className="u-title"> {i.title}</span>}</>;
+}
+function UserName({username, fallback}: { username: string | undefined; fallback?: string }) {
+    const i = USER_INFO.get((username || '').toLowerCase());
+    return i ? <NameTitle i={i}/> : <>{fallback || username || '?'}</>;
 }
 
 function authorLabel(a: Author | undefined): string {
@@ -305,7 +316,7 @@ function authorLabel(a: Author | undefined): string {
 
 // 이름 앞에 봇 아이콘(봇 계정일 때)을 붙여 렌더
 function AuthorName({a}: { a: Author | undefined }) {
-    return <>{a?.is_bot && <Icon name="bot" size={13} className="bot-ico"/>}{authorLabel(a)}</>;
+    return <>{a?.is_bot && <Icon name="bot" size={13} className="bot-ico"/>}<UserName username={a?.username} fallback={a ? a.name || a.username : '?'}/></>;
 }
 
 // 팀원 저장 :: 저장 후 표시 이름 갱신 알림 (모든 저장 경로가 이 래퍼를 거침)
@@ -1570,7 +1581,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                         <div key={u.username}>
                             <div className="lb-row lb-row-click" title="클릭하면 일별 활동지수 펼치기" onClick={() => setOpenUser(open ? null : u.username)}>
                                 <span className="lb-rank">{i + 1}</span>
-                                <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={e => { e.stopPropagation(); onDrill(u.username); }}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}{userLabel(u.username, u.name)}</span>
+                                <span className="lb-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={e => { e.stopPropagation(); onDrill(u.username); }}>{u.isBot && <Icon name="bot" size={13} className="bot-ico"/>}<UserName username={u.username} fallback={u.name}/></span>
                                 <div className="lb-bar-wrap">
                                     <div className="lb-bar" style={{width: `${(u.score / scoreMax) * 100}%`}}/>
                                 </div>
@@ -1610,7 +1621,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 <div className={`heat ${period === 90 ? 'heat-sm' : ''}`}>
                     {top.map(u => (
                         <div key={u.username} className="heat-row">
-                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={12} className="bot-ico"/>}{userLabel(u.username, u.name)}</span>
+                            <span className="heat-name drill" title={`${u.username} — 클릭하면 피드에서 필터`} onClick={() => onDrill(u.username)}>{u.isBot && <Icon name="bot" size={12} className="bot-ico"/>}<UserName username={u.username} fallback={u.name}/></span>
                             {days.map(d => {
                                 const v = u.byDay.get(d) ?? 0;
                                 return <span key={d} className={`cell cell-${level(v)}`} title={`${userLabel(u.username, u.name)} · ${d} · ${Math.round(v)}점`}/>;
@@ -1674,7 +1685,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 </h3>
                 {codeByUser.map(([user, r]) => (
                     <div key={user} className="lb-row">
-                        <span className="lb-name drill" title={`${user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(user)}>{userLabel(user)}</span>
+                        <span className="lb-name drill" title={`${user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(user)}><UserName username={user}/></span>
                         <div className="lb-bar-wrap code-bar-wrap">
                             <div className="code-bar-add" style={{width: `${(r.add / codeMax) * 100}%`}}/>
                             <div className="code-bar-del" style={{width: `${(r.del / codeMax) * 100}%`}}/>
@@ -1692,7 +1703,7 @@ function StatsView({snap, period, onDrill}: { snap: Snapshot; period: Period; on
                 <h3>리뷰어 활동 Top 10 <span className="hint">승인 ×2 + MR 댓글 기준 · 승인은 현재 시점 집계</span></h3>
                 {reviewers.map(r => (
                     <div key={r.user} className="lb-row">
-                        <span className="lb-name drill" title={`${r.user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(r.user)}>{userLabel(r.user)}</span>
+                        <span className="lb-name drill" title={`${r.user} — 클릭하면 피드에서 필터`} onClick={() => onDrill(r.user)}><UserName username={r.user}/></span>
                         <div className="lb-bar-wrap">
                             <div className="lb-bar lb-bar-review" style={{width: `${((r.approvals * 2 + r.comments) / reviewerMax) * 100}%`}}/>
                         </div>
@@ -2718,7 +2729,7 @@ function NameMappingSection() {
     };
     const ql = q.trim().toLowerCase();
     const shown = users.filter(u => !ql || u.username.toLowerCase().includes(ql) || (u.name || '').toLowerCase().includes(ql)
-        || (USER_LABEL.get(u.username.toLowerCase()) || '').toLowerCase().includes(ql));
+        || userLabel(u.username, '').toLowerCase().includes(ql));
     const linked = shown.filter(u => map.has(u.username.toLowerCase()));
     const rest = shown.filter(u => !map.has(u.username.toLowerCase()));
 
@@ -2736,7 +2747,7 @@ function NameMappingSection() {
                     <option value="">— 연결 안 함 —</option>
                     {active.map(x => <option key={x.id} value={x.id} disabled={taken.has(x.id) && x.id !== id}>{x.name}{x.role ? ` · ${x.role}` : ''}</option>)}
                 </select>
-                <b className="map-target" style={{minWidth: 90}}>{m ? memberLabel(m) : ''}</b>
+                <b className="map-target" style={{minWidth: 90}}>{m ? <NameTitle i={memberInfo(m)}/> : ''}</b>
             </div>
         );
     };
@@ -3344,7 +3355,7 @@ function DailyReportView() {
             {rep && (
                 <>
                     <div className="board-head" style={{marginTop: 4}}>
-                        <h3 style={{margin: 0}}>{userLabel(rep.username, rep.name)} · {rep.date}</h3>
+                        <h3 style={{margin: 0}}><UserName username={rep.username} fallback={rep.name}/> · {rep.date}</h3>
                         <span className="poc-sub">{rep.team || ''}</span>
                         <span style={{flex: 1}}/>
                         <span className="chip"><span className="chip-label">커밋</span> {comma(rep.commit_count)}</span>
@@ -3879,7 +3890,7 @@ function App() {
                                         <div className="mr-title">{mr.draft && <span className="draft">Draft</span>}!{mr.iid} {mr.title}</div>
                                         <div className="mr-meta">
                                             <span>{mr.project_path}</span>
-                                            <span>{authorLabel(mr.author)} · {timeAgo(mr.updated_at)}</span>
+                                            <span><UserName username={mr.author?.username} fallback={mr.author?.name || mr.author?.username}/> · {timeAgo(mr.updated_at)}</span>
                                         </div>
                                     </div>
                                 </div>
